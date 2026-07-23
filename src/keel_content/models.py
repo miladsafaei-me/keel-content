@@ -170,8 +170,11 @@ class TweetCandidate(models.Model):
         verbose_name = "Tweet candidate"
         verbose_name_plural = "Tweet candidates"
         indexes = [
-            models.Index(fields=["status", "route"]),
-            models.Index(fields=["linked_post", "status"]),
+            # Explicit names matching the adopted physical indexes (created by the
+            # original content_pipeline migration) + this package's 0001, so an
+            # adopting host's makemigrations stays clean (no auto-name rename).
+            models.Index(fields=["status", "route"], name="content_pip_status_route_idx"),
+            models.Index(fields=["linked_post", "status"], name="content_pip_linked_status_idx"),
         ]
 
     def __str__(self) -> str:
