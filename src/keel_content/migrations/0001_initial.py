@@ -5,6 +5,16 @@ keel-content owns only the Twitter intake models (``TwitterSource`` +
 (``content_plan`` / ``linked_post``) live in the host CMS and are reached as
 swappable targets, so this migration depends on whichever apps the host points
 ``KEEL_CONTENT_CONTENT_PLAN_MODEL`` / ``KEEL_CONTENT_POST_MODEL`` at.
+
+**Adoption-first (state-only).** Like keel-seo's Landing move, the whole thing is
+wrapped in ``SeparateDatabaseAndState`` with empty ``database_operations``: the
+tables (``content_pipeline_twitter_source`` / ``_tweet_candidate``) are the host's
+existing ones, adopted untouched — Django only records the models in its state. A
+host that already ran the SignalBots ``content_pipeline`` migrations keeps its data;
+its ``content_pipeline`` app then removes these models from *its* state (a matching
+state-only ``DeleteModel``). Because no DDL runs, the automated deploy ``migrate``
+applies this cleanly with zero risk of a "table already exists" failure. (A
+genuinely fresh project seeds these two tables out-of-band.)
 """
 
 from django.conf import settings
@@ -25,6 +35,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],
+            state_operations=[
         migrations.CreateModel(
             name="TwitterSource",
             fields=[
@@ -85,5 +98,7 @@ class Migration(migrations.Migration):
         migrations.AddIndex(
             model_name="tweetcandidate",
             index=models.Index(fields=["linked_post", "status"], name="content_pip_linked_status_idx"),
+        ),
+            ],
         ),
     ]

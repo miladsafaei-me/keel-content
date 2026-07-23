@@ -27,9 +27,6 @@ Homepage = "https://github.com/miladsafaei-me/keel-content"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keel_content"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/keel_content/prompts_default" = "keel_content/prompts_default"
-"src/keel_content/fonts" = "keel_content/fonts"
-"src/keel_content/fixtures" = "keel_content/fixtures"
-"src/keel_content/tools" = "keel_content/tools"
+# hatchling includes every file under the package (prompts_default/, fonts/, fixtures/,
+# tools/, migrations/, non-.py assets) automatically — no force-include (which would
+# double-add them and fail the build with "a second file is being added at the same path").
