@@ -1,0 +1,27 @@
+{
+  "competitors": [
+    {"url": "https://example.com/competitor-a", "title": "What is signal latency?", "approx_word_count": 1100, "toc": ["Definition", "Why it matters"], "strengths": ["Clear definition"], "weaknesses": ["No real numbers", "No concrete broker comparisons"], "schema_features": []},
+    {"url": "https://example.com/competitor-b", "title": "Low-latency trading explained", "approx_word_count": 1800, "toc": ["Latency types", "HFT context", "Retail myths"], "strengths": ["Distinguishes HFT vs retail"], "weaknesses": ["Too abstract for retail traders", "No actionable broker checklist"], "schema_features": ["faq"]}
+  ],
+  "skipped_urls": [],
+  "intent_analysis": {
+    "what_user_actually_wants": "A retail trader wants to know whether signal latency is something they should actually care about for their bot, and if so, by how much it affects real P&L.",
+    "questions_user_has_in_their_head": ["Is 50ms latency bad?", "Will my VPS choice matter?", "How do I measure my current latency?"],
+    "decision_or_action_after_reading": "Decide whether to invest in a lower-latency broker / VPS, or stay with current setup."
+  },
+  "competitor_gap": {
+    "what_no_one_covers_well": ["Concrete P&L impact per X ms of latency", "How to measure latency yourself"],
+    "what_everyone_gets_wrong": ["Lumping retail and HFT latency requirements"],
+    "underused_format_opportunities": ["Side-by-side broker latency comparison table", "Decision flowchart"]
+  },
+  "article_thesis": "Latency matters in non-obvious ways for retail bots: it's not about chasing HFT-grade speeds, but about whether your signal arrives before the opportunity closes.",
+  "must_cover": ["What latency means in retail trading", "Real numbers (p50, p99) for typical brokers", "When latency starts to bite vs. when it doesn't"],
+  "must_avoid": ["HFT comparisons that confuse retail readers", "Vague claims like 'every millisecond counts'"],
+  "target_word_count": 1400,
+  "primary_keyword": "signal latency trading bot",
+  "secondary_keywords": ["broker latency", "trading bot profitability", "VPS for trading"],
+  "suggested_serp_features_to_target": ["faq", "comparison-table"],
+  "internal_link_targets_to_use": ["/risk-warning", "/signal-bots"],
+  "title_options": ["How Signal Latency Shapes Trading Bot Profitability"],
+  "meta_description_options": ["Discover how signal latency affects your trading bot's edge, with real broker numbers and a step-by-step way to measure your own setup."]
+}

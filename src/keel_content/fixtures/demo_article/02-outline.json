@@ -1,0 +1,22 @@
+{
+  "title": "How Signal Latency Shapes Trading Bot Profitability",
+  "slug": "signal-latency-trading-bot-profitability-demo",
+  "meta_description": "Discover how signal latency affects your trading bot's edge, with real broker numbers and a step-by-step way to measure your own setup.",
+  "estimated_word_count": 1400,
+  "key_takeaways_intent": "Three blunt truths about latency for retail bots: when it matters, when it doesn't, and how to measure it.",
+  "sections": [
+    {"level": "h2", "heading": "What signal latency actually means for your bot", "section_id": "what-latency-means", "covers": ["Definition", "Difference from network ping", "p50 vs p99 framing"], "approx_word_count": 300, "special_block": null},
+    {"level": "h2", "heading": "The execution flow: from idea to filled order", "section_id": "execution-flow", "covers": ["End-to-end path", "Where ms accumulate"], "approx_word_count": 250, "special_block": null},
+    {"level": "h2", "heading": "Real broker latency numbers (p50 and p99)", "section_id": "broker-numbers", "covers": ["3-broker comparison", "Why p99 matters more than p50"], "approx_word_count": 350, "special_block": "comparison_table"},
+    {"level": "h2", "heading": "When latency starts to hurt your P&L", "section_id": "when-it-hurts", "covers": ["Strategy types most affected", "A monthly win-rate trend example"], "approx_word_count": 350, "special_block": null},
+    {"level": "h2", "heading": "How to measure your own latency in 10 minutes", "section_id": "measure-yourself", "covers": ["Step-by-step", "Tools to use"], "approx_word_count": 250, "special_block": null}
+  ],
+  "faq_planned": [
+    {"question": "Does my VPS choice really matter for retail bots?", "answer_outline": "Yes for sub-second strategies; less so for swing bots."},
+    {"question": "What's a 'good' p99 latency for a forex bot?", "answer_outline": "Under 80 ms for scalping; under 300 ms for most others."}
+  ],
+  "internal_links_planned": [
+    {"anchor_text": "risk warning", "target_url": "/risk-warning"},
+    {"anchor_text": "signal bots", "target_url": "/signal-bots"}
+  ]
+}

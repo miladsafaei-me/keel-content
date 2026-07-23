@@ -1,0 +1,11 @@
+{
+  "keyword": "how signal latency affects trading bot profitability",
+  "search_intent": "informational",
+  "search_intent_description": "The searcher already runs a bot or is about to deploy one, and wants a concrete answer to: 'does latency actually move my P&L, by how much, and what would I need to change to fix it?' They expect real numbers (ms ranges per broker class, win-rate deltas per strategy class), a way to measure their own setup, and a decision rule for when to spend on lower-latency infra vs. when not to bother.",
+  "audience": "Intermediate retail traders evaluating whether to switch from manual to automated trading; comfortable with broker APIs and MT4/5 but uncertain about latency's practical impact.",
+  "notes": "Demo article scaffolded without Anthropic API. Hand-written fixtures demonstrate all 4 non-Gemini visual types (matplotlib chart, mermaid, chartjs, html block).",
+  "target": "blog",
+  "slug": "signal-latency-trading-bot-profitability-demo",
+  "author_slug": "content",
+  "reviewer_slug": "arjun-mehta"
+}

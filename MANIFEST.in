@@ -1,0 +1,7 @@
+recursive-include src/keel_content/prompts_default *
+recursive-include src/keel_content/fonts *
+recursive-include src/keel_content/fixtures *
+recursive-include src/keel_content/tools *
+recursive-include content-pipeline-template *
+include README.md
+include CLAUDE.md

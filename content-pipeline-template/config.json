@@ -1,0 +1,13 @@
+{
+  "$schema_version": "2.0",
+  "_note": "Scope: this file governs ONLY the legacy single-article API path (core/glossary_gap.py via core/config.py). The agent Workflow (tools/content_pipeline/generate.workflow.js) reads NONE of it — article voice/structure/compliance law lives in BLOG.md + prompts/agent-author-brief.md, and publisher defaults come from the bundle, not here. The old 5-step orchestrator's tone/writing_style/models/engagement sections were removed when that orchestrator was retired.",
+  "glossary_gap": {
+    "enabled": true
+  },
+  "claude_models": {
+    "glossary_gap": "claude-haiku-4-5-20251001"
+  },
+  "claude_max_tokens": {
+    "glossary_gap": 2000
+  }
+}

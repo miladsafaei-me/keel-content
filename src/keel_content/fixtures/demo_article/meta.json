@@ -1,0 +1,15 @@
+{
+  "content_id": "demo-signal-latency",
+  "slug": "signal-latency-trading-bot-profitability-demo",
+  "title": "How Signal Latency Shapes Trading Bot Profitability",
+  "meta_title": "How Signal Latency Shapes Trading Bot Profitability",
+  "meta_description": "Discover how signal latency affects your trading bot's edge, with real broker numbers and a step-by-step way to measure your own setup.",
+  "excerpt": "A practical look at how signal latency actually affects trading-bot profitability, with real broker numbers and a measurement workflow you can run today.",
+  "key_takeaways_markdown": "- Latency only hurts retail bots above strategy-specific thresholds; not every millisecond matters.\n- p99 latency (the worst 1% of trades) tells you more than p50 about real P&L impact.\n- You can measure your full signal-to-fill latency in 10 minutes with tools already on your VPS.",
+  "target": "blog",
+  "author_slug": "content",
+  "reviewer_slug": "arjun-mehta",
+  "initial_status": "draft",
+  "image_paths_relative_to_article_dir": [],
+  "tags_planned": []
+}

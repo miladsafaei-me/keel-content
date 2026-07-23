@@ -1,0 +1,71 @@
+{
+  "visuals": [
+    {
+      "id": "fig-flow",
+      "anchor": {"position": "after_paragraph", "paragraph_index": 0, "section_id": "execution-flow"},
+      "type": "mermaid",
+      "purpose": "Visualize where the ms accumulate between signal and fill.",
+      "alt": "Flowchart showing signal generation, network transit, broker routing, and matching engine as four latency stages.",
+      "caption": "Each stage adds variable latency; the p99 outlier is usually the broker, not the wire.",
+      "spec": {
+        "diagram_type": "flowchart",
+        "mermaid_source": "flowchart LR\n    A[\"Strategy<br/>generates signal\"] --> B[\"Network<br/>transit\"]\n    B --> C[\"Broker order<br/>routing\"]\n    C --> D[\"Matching engine<br/>fill\"]\n    D --> E[\"Confirmation<br/>back to bot\"]"
+      }
+    },
+    {
+      "id": "fig-broker-latency",
+      "anchor": {"position": "after_paragraph", "paragraph_index": 0, "section_id": "broker-numbers"},
+      "type": "matplotlib_chart",
+      "purpose": "Show realistic p50 and p99 latency ranges by broker category.",
+      "alt": "Bar chart comparing p50 and p99 latency in milliseconds across ECN, market-maker, and crypto exchange brokers.",
+      "caption": "Indicative latency ranges; measure your own setup before relying on these.",
+      "spec": {
+        "chart_type": "bar",
+        "title": "Typical broker latency (ms, lower is better)",
+        "x_label": "Broker category",
+        "y_label": "Latency (ms)",
+        "data": {
+          "labels": ["ECN", "Market maker", "Crypto exchange"],
+          "series": [
+            {"name": "p50", "values": [35, 95, 60]},
+            {"name": "p99", "values": [180, 540, 320]}
+          ]
+        },
+        "color_intent": "categorical",
+        "annotations": []
+      }
+    },
+    {
+      "id": "fig-winrate",
+      "anchor": {"position": "after_paragraph", "paragraph_index": 1, "section_id": "when-it-hurts"},
+      "type": "chartjs",
+      "purpose": "Show how the same scalping strategy diverges across two latency setups over four months.",
+      "alt": "Line chart of monthly win rate for a scalping bot on a 60ms vs 220ms latency setup, January through April.",
+      "caption": "Hover any point to see the exact win rate; legend click toggles series.",
+      "spec": {
+        "chart_type": "line",
+        "title": "Scalping bot win rate by latency setup",
+        "data": {
+          "labels": ["Jan", "Feb", "Mar", "Apr"],
+          "datasets": [
+            {"label": "60ms p99 (low-latency VPS)", "data": [62, 64, 61, 65], "borderColor": "#3bb273", "backgroundColor": "rgba(59,178,115,0.15)", "tension": 0.3},
+            {"label": "220ms p99 (commodity VPS)", "data": [54, 52, 49, 50], "borderColor": "#df2c53", "backgroundColor": "rgba(223,44,83,0.15)", "tension": 0.3}
+          ]
+        },
+        "options_hint": "show exact value on hover; let user toggle series via legend click"
+      }
+    },
+    {
+      "id": "fig-strategy-table",
+      "anchor": {"position": "after_paragraph", "paragraph_index": 0, "section_id": "when-it-hurts"},
+      "type": "html_block",
+      "purpose": "Quick-scan reference for how much latency matters per strategy class.",
+      "alt": "Reference table: scalping is highly latency-sensitive; breakout and swing are moderately so or insensitive.",
+      "caption": null,
+      "spec": {
+        "purpose_label": "comparison_table",
+        "html": "<table>\n  <thead>\n    <tr><th>Strategy class</th><th>Hold time</th><th>p99 threshold</th><th>Latency sensitivity</th></tr>\n  </thead>\n  <tbody>\n    <tr><td>Scalping</td><td>seconds-minutes</td><td>&lt;120 ms</td><td><span style=\"color:#df2c53;font-weight:600\">High</span></td></tr>\n    <tr><td>Intraday breakout</td><td>minutes-hours</td><td>&lt;500 ms</td><td><span style=\"color:#f59e0b;font-weight:600\">Medium</span></td></tr>\n    <tr><td>Swing</td><td>days</td><td>&lt;2000 ms</td><td><span style=\"color:#3bb273;font-weight:600\">Low</span></td></tr>\n  </tbody>\n</table>"
+      }
+    }
+  ]
+}
