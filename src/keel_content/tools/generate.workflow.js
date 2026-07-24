@@ -4,8 +4,9 @@ export const meta = {
     'Generate one project blog draft per worklist spec — one fresh agent each, each writing a self-contained bundle JSON for content_import. Then an independent link-relevance gate reviews every draft\'s external sources, and a cluster-linking pass wires blog→blog internal links within each topic cluster once all its articles exist. Independent contexts (no chaining) so every article gets a fresh strategist read.',
   phases: [
     { title: 'Generate', detail: 'one fresh agent per content spec' },
-    { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links' },
-    { title: 'Intent gate', detail: 'adversarial reviewer checks each draft actually satisfies its search intent + scope; one revision on fail' },
+    { title: 'Intent gate', detail: 'adversarial reviewer checks each draft actually satisfies its search intent + scope; one revision on fail — runs FIRST so the prose is settled before it is polished and before links + visuals are judged against it' },
+    { title: 'Editorial gate', detail: 'independent reader judges how the FINAL article READS (flow, cohesion, voice, seams from the stitched-together assembly); one flow-only revision on fail — runs after the intent gate so it polishes the settled prose' },
+    { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links AGAINST THE FINAL body (after any intent-gate + editorial-gate revision)' },
     { title: 'Figures', detail: 'a separate agent draws each article\'s in-article figures (SVG -> WebP) from the author\'s figure_requests after the body is FINAL; a vision judge gates them, one revision on fail' },
     { title: 'Images', detail: 'a separate agent renders the OPTIONAL in-article image-nb2 photoreal images (Gemini scene + SVG text overlay -> WebP) from the author\'s image_requests, within the 2-per-1000-words budget; a vision judge gates them, one revision on fail' },
     { title: 'Hero', detail: 'a separate agent designs each article\'s bespoke featured-image SVG after the body is FINAL (post intent-gate revision)' },
@@ -44,6 +45,7 @@ const indexableUrls = (A && Array.isArray(A.indexableUrls) && A.indexableUrls) |
 const gatePath = (A && A.gatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/link-relevance-gate.md` : '')
 const heroPath = (A && A.heroPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-hero.md` : '')
 const intentGatePath = (A && A.intentGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/intent-satisfaction-gate.md` : '')
+const editorialGatePath = (A && A.editorialGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/editorial-quality-gate.md` : '')
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
 const figureJudgePath = (A && A.figureJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
@@ -97,7 +99,7 @@ const buildPrompt = (spec) => {
     `1. Read the author brief first: ${briefPath}`,
     `2. repoRoot for every other read (BLOG.md, BUSINESS.md, CLAUDE.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
     hasTranscript
-      ? '3. THIS IS A YOUTUBE-SOURCED ARTICLE. Your PRIMARY source material is the video transcript ' + (transcriptPath ? `— READ it FIRST from this file: ${transcriptPath}` : 'at the END of this prompt') + '. Write the article FROM it. Read the author brief\'s "YouTube-transcript-sourced articles" section and follow it exactly: re-explain the ideas in ORIGINAL prose and the project\' voice (NEVER republish the transcript verbatim or near-verbatim), keep only what is accurate, and DROP the creator\'s self-promotion, competitor products, affiliate pitches, and any unverifiable win-rate / "risk-free" / "guaranteed" claims (reframe such claims skeptically, in our voice). The source video is auto-attached to the post and embedded by the template, so do NOT add a [[VIDEO:...]] embed of the SOURCE video yourself. Any competitor_urls in the spec are only secondary SERP context for what readers expect.'
+      ? '3. THIS IS A YOUTUBE-SOURCED ARTICLE. Your PRIMARY source material is the video transcript ' + (transcriptPath ? `— READ it FIRST from this file: ${transcriptPath}` : 'at the END of this prompt') + '. Write the article FROM it. Read the author brief\'s "YouTube-transcript-sourced articles" section and follow it exactly: re-explain the ideas in ORIGINAL prose and project\' voice (NEVER republish the transcript verbatim or near-verbatim), keep only what is accurate, and DROP the creator\'s self-promotion, competitor products, affiliate pitches, and any unverifiable win-rate / "risk-free" / "guaranteed" claims (reframe such claims skeptically, in our voice). The source video is auto-attached to the post and embedded by the template, so do NOT add a [[VIDEO:...]] embed of the SOURCE video yourself. Any competitor_urls in the spec are only secondary SERP context for what readers expect.'
       : '3. Use your web-research tools to study the competitor URLs and the topic. If WebSearch/WebFetch are not already loaded, load them via ToolSearch first.',
     '4. Do the FULL job for THIS spec only, in your own fresh context: intent-first SERP research (discard off-intent competitor URLs into the report), strategist outline, a comprehensive draft (length follows the intent — NO word-count target, never padding), code-in-page visuals DERIVED from this article\'s intent (no fixed count, no one-of-each quota; legible in BOTH light and dark), self-critique, then engagement-formatted final assembly. Do NOT author the hero — a separate stage designs it after your draft exists.',
     `5. Write the bundle JSON to EXACTLY: ${outDir}/${spec.content_id}.bundle.json`,
@@ -364,6 +366,27 @@ const buildIntentGatePrompt = (spec) =>
     JSON.stringify(intentFields(spec), null, 2),
   ].join('\n')
 
+// Shared visual-reconciliation contract for EVERY stage that rewrites the body
+// (intent-revise + editorial-revise). A body edit can strand a visual: a
+// figure_request pointing at deleted content, a new section illustrated nowhere
+// while its neighbours carry visuals, or a marker with no matching entry. Figures
+// are drawn and cp-components rendered downstream from these contracts, so a body
+// rewrite that leaves them stale ships a wrong or missing visual. Defined once so
+// both revise prompts enforce it identically.
+const VISUAL_RECONCILE_STEPS =
+  'RECONCILE the visuals with the body you just changed:\n' +
+  '   - figure_requests: every [[FIGURE:<id>]] marker must have exactly one figure_requests\n' +
+  '     entry and vice-versa, and >=1 must remain. If you ADDED a section that earns a drawn\n' +
+  '     figure, add a matching entry + marker; if you REMOVED/rewrote what a figure pointed\n' +
+  '     at, drop or repoint that entry + marker. Leave already-valid figure_requests untouched.\n' +
+  '   - cp-component visuals: if you ADDED a section carrying a data structure a catalog\n' +
+  '     component would illustrate (comparison, flow, steps, distribution), embed the fitting\n' +
+  '     cp-component block inline so the new section is not prose-only while the rest of the\n' +
+  '     article is illustrated; if you REMOVED a section, remove its now-orphaned component.\n' +
+  '     Never add a component where the section does not earn one (no one-of-each quota).\n' +
+  '   - image_requests / [[IMAGE:<id>]] markers: keep them paired the same way; drop any whose\n' +
+  '     paragraph you deleted.'
+
 // Single revision pass, run ONLY when the intent gate fails: an author agent reads the
 // verdict and patches the body to cover the missing essential elements and trim any
 // scope violation, then re-validates. Bounded to one attempt — a re-gate records the
@@ -381,8 +404,9 @@ const buildRevisePrompt = (spec, verdict) =>
     '4. Keep every mechanical rule (cp-component data specs valid, no inline style=, 2-4',
     '   takeaways, meta/title/h1 lengths, INDEXABLE_URLS-only internal links, no /blog links).',
     '   Do NOT touch the "internal_links" or "external_sources" fields.',
-    `5. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
-    '6. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
+    `5. ${VISUAL_RECONCILE_STEPS}`,
+    `6. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
+    '7. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
   ].join('\n')
 
 const INTENT_VERDICT_SCHEMA = {
@@ -399,12 +423,96 @@ const INTENT_VERDICT_SCHEMA = {
   required: ['satisfied'],
 }
 
-// pipeline: each article flows write -> relevance-gate -> intent-gate -> hero
-// independently (no barrier). The hero runs LAST so it is drawn from the final,
-// post-revision body. A failed author bundle (status null) skips the rest. The
-// downstream content_import then runs the deterministic 200 + allowlist gate on
-// whatever external_sources survived here, and blocks on an unsatisfied
-// intent_gate verdict (override: --allow-unsatisfied).
+// Editorial-quality gate for one already-written bundle: an independent reader that
+// judges ONLY how the FINAL article READS — flow, cohesion, voice consistency, visual
+// integration, intro/closing coherence, readability — the seams a stitched-together
+// pipeline (draft + intent-revision sections + inserted visuals + post-hoc links) can
+// leave. Runs AFTER the intent gate (prose is final) and BEFORE the relevance gate and
+// visuals (so links/figures land on the polished body). It patches an `editorial_gate`
+// verdict into the bundle. Advisory — a residual fail is surfaced, not import-blocked.
+const buildEditorialGatePrompt = (spec) =>
+  [
+    'Judge ONLY how ONE already-generated project blog article READS — its flow and',
+    'cohesion — not whether it satisfies search intent (a separate gate already did that).',
+    'The article was assembled in pieces (a draft, then an intent revision that may have',
+    'added/removed sections, plus visual markers), so hunt for the SEAMS that hurt reading.',
+    '',
+    `1. Read the editorial-quality-gate brief IN FULL: ${editorialGatePath}`,
+    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
+    '   Read its title/h1/meta_description + body_markdown. Treat [[FIGURE:<id>]] /',
+    '   [[IMAGE:<id>]] as visual placeholders — judge whether the prose AROUND each one',
+    '   sets it up and pays it off, not the marker text itself.',
+    '3. Score the rubric dimensions in the brief (flow & transitions, cohesion &',
+    '   non-redundancy, voice consistency, visual integration, opening/closing coherence,',
+    '   readability). Flag SPECIFIC seam locations. Only fail for problems a reader would',
+    '   actually feel — do NOT nitpick prose that already reads well.',
+    '4. Patch an "editorial_gate" object into the bundle (leave every other field untouched;',
+    `   write it back to the SAME path; slug stays "${spec.slug}").`,
+    '5. Then return the structured verdict.',
+  ].join('\n')
+
+// Single flow-only revision, run ONLY when the editorial gate fails. It smooths the
+// seams the judge named WITHOUT changing substance — no added/removed facts, no
+// reintroduced scope violations, no new/dropped sections beyond what a transition
+// needs; it rewrites transitions/sentences, removes redundancy, unifies voice, and
+// keeps the visuals reconciled. Bounded to one attempt; a re-judge records the honest
+// final verdict.
+const buildEditorialRevisePrompt = (spec, verdict) =>
+  [
+    'Smooth the READING of ONE already-generated project blog article (editorial follow-up).',
+    'This is a PROSE pass, not a rewrite: preserve every fact, element, section, and the',
+    'structure the intent gate blessed — change only how it reads.',
+    '',
+    `1. Read the author brief IN FULL first: ${briefPath} (all rules still apply).`,
+    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it.`,
+    '3. The editorial gate flagged these reading problems — fix exactly these:',
+    `   - problems by dimension: ${JSON.stringify((verdict && verdict.problems) || [])}`,
+    `   - specific seam locations: ${JSON.stringify((verdict && verdict.seams) || [])}`,
+    '   Fix them by rewriting transitions and sentences, adding connective tissue, removing',
+    '   repeated explanations, and unifying voice/tense/person. Do NOT add or remove facts,',
+    '   essential elements, or sections; do NOT reintroduce anything the intent gate removed;',
+    '   do NOT touch the "internal_links" or "external_sources" fields.',
+    '4. Keep every mechanical rule (cp-component specs valid, no inline style=, 2-4 takeaways,',
+    '   meta/title/h1 lengths, INDEXABLE_URLS-only internal links, no /blog links).',
+    `5. ${VISUAL_RECONCILE_STEPS}`,
+    `6. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
+    '7. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
+  ].join('\n')
+
+const EDITORIAL_VERDICT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    slug: { type: 'string' },
+    reads_well: { type: 'boolean', description: 'true only when the article flows as one coherent piece with no reader-felt seams.' },
+    scores: {
+      type: 'object', additionalProperties: true,
+      properties: {
+        flow: { type: 'integer' },
+        cohesion: { type: 'integer' },
+        voice: { type: 'integer' },
+        visual_integration: { type: 'integer' },
+        opening_closing: { type: 'integer' },
+        readability: { type: 'integer' },
+      },
+    },
+    problems: { type: 'array', items: { type: 'string' } },
+    seams: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['reads_well'],
+}
+
+// pipeline: each article flows write -> intent-gate (+revision) -> editorial-gate
+// (+revision) -> relevance-gate -> figures -> images -> hero independently (no
+// barrier). The two body-revising gates run FIRST and in this order — intent
+// settles WHAT the article says (coverage + scope), then the editorial gate
+// settles HOW it reads (flow, cohesion, voice, the seams a stitched-together
+// assembly leaves) — so the external-source relevance gate, the figures, the
+// images, and the hero are all judged/drawn against the FINAL, polished body. A
+// failed author bundle (status null) skips the rest. The downstream content_import
+// then runs the deterministic 200 + allowlist gate on whatever external_sources
+// survived here, and blocks on an unsatisfied intent_gate verdict (override:
+// --allow-unsatisfied); the editorial_gate verdict is advisory (surfaced, not blocking).
 //
 // THROTTLE: each author agent is a heavy general-purpose run (multi web fetch + long
 // draft). Letting the runtime fan out all specs at once (cap = min(16, cores-2)) burst-
@@ -428,16 +536,11 @@ for (let w = 0; w < waves.length; w++) {
         phase: 'Generate',
         agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
       }).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
-    (authored, spec) => {
-      if (!gatePath || !authored || authored.status == null) return { ...authored, gated: false }
-      return agent(buildGatePrompt(spec), {
-        label: `gate:${spec.slug}`,
-        phase: 'Relevance gate',
-        agentType: 'general-purpose',
-      }).then((gate) => ({ ...authored, gated: true, gate }))
-    },
-    async (gated, spec) => {
-      if (!intentGatePath || !gated || gated.status == null) return { ...gated, intentGate: null }
+    // Stage 2 — INTENT GATE FIRST. Any body revision it triggers happens before
+    // the relevance gate, figures, images, and hero, so every later stage sees the
+    // FINAL body. Operates directly on the author bundle (no relevance gate ran yet).
+    async (authored, spec) => {
+      if (!intentGatePath || !authored || authored.status == null) return { ...authored, intentGate: null }
       let verdict = await agent(buildIntentGatePrompt(spec), {
         label: `intent-gate:${spec.slug}`,
         phase: 'Intent gate',
@@ -460,7 +563,48 @@ for (let w = 0; w < waves.length; w++) {
           schema: INTENT_VERDICT_SCHEMA,
         })
       }
-      return { ...gated, intentGate: { satisfied: !!(verdict && verdict.satisfied), revised } }
+      return { ...authored, intentGate: { satisfied: !!(verdict && verdict.satisfied), revised } }
+    },
+    // Stage 3 — EDITORIAL GATE. Judges how the FINAL article READS (flow, cohesion,
+    // voice, seams) after the intent revision settled the prose, and BEFORE the
+    // relevance gate + visuals so links/figures land on the polished body. One
+    // flow-only revision on fail, then a re-judge records the honest verdict.
+    async (intented, spec) => {
+      if (!editorialGatePath || !intented || intented.status == null) return { ...intented, editorialGate: null }
+      let verdict = await agent(buildEditorialGatePrompt(spec), {
+        label: `editorial-gate:${spec.slug}`,
+        phase: 'Editorial gate',
+        agentType: 'general-purpose',
+        schema: EDITORIAL_VERDICT_SCHEMA,
+      })
+      let revised = false
+      if (verdict && verdict.reads_well === false) {
+        await agent(buildEditorialRevisePrompt(spec, verdict), {
+          label: `editorial-revise:${spec.slug}`,
+          phase: 'Editorial gate',
+          agentType: 'general-purpose',
+        })
+        revised = true
+        // Re-judge once to record the honest final verdict in the bundle.
+        verdict = await agent(buildEditorialGatePrompt(spec), {
+          label: `editorial-rejudge:${spec.slug}`,
+          phase: 'Editorial gate',
+          agentType: 'general-purpose',
+          schema: EDITORIAL_VERDICT_SCHEMA,
+        })
+      }
+      return { ...intented, editorialGate: { reads_well: !!(verdict && verdict.reads_well), revised } }
+    },
+    // Stage 4 — RELEVANCE GATE, now against the FINAL body. The intent-gate and
+    // editorial-gate revisions (if any) have already run, so external sources are
+    // fetched and judged against the article the reader will actually get.
+    (judged, spec) => {
+      if (!gatePath || !judged || judged.status == null) return { ...judged, gated: false }
+      return agent(buildGatePrompt(spec), {
+        label: `gate:${spec.slug}`,
+        phase: 'Relevance gate',
+        agentType: 'general-purpose',
+      }).then((gate) => ({ ...judged, gated: true, gate }))
     },
     async (judged, spec) => {
       if (!figuresPath || !judged || judged.status == null) return { ...judged, figures: null }
@@ -547,6 +691,9 @@ const heroCount = ok.filter((r) => r && r.hero).length
 const intentChecked = ok.filter((r) => r && r.intentGate).length
 const intentSatisfied = ok.filter((r) => r && r.intentGate && r.intentGate.satisfied).length
 const intentRevised = ok.filter((r) => r && r.intentGate && r.intentGate.revised).length
+const editorialChecked = ok.filter((r) => r && r.editorialGate).length
+const editorialPassed = ok.filter((r) => r && r.editorialGate && r.editorialGate.reads_well).length
+const editorialRevised = ok.filter((r) => r && r.editorialGate && r.editorialGate.revised).length
 const figuresRun = ok.filter((r) => r && r.figures).length
 const figuresApproved = ok.filter((r) => r && r.figures && r.figures.approved).length
 const figuresRevised = ok.filter((r) => r && r.figures && r.figures.revised).length
@@ -554,6 +701,7 @@ const imagesArticles = ok.filter((r) => r && r.images && r.images.count > 0).len
 const imagesTotal = ok.reduce((n, r) => n + ((r && r.images && r.images.count) || 0), 0)
 log(`done: ${ok.length}/${contents.length} drafts written, ${gatedCount} passed the relevance gate, ${heroCount} heroes authored — bundles in ${outDir}`)
 log(`intent gate: ${intentSatisfied}/${intentChecked} satisfied (${intentRevised} revised once); unsatisfied drafts are flagged at content_import`)
+log(`editorial gate: ${editorialPassed}/${editorialChecked} read cleanly (${editorialRevised} flow-revised once); the verdict is advisory — a residual seam is surfaced, not blocked`)
 log(`figures: ${figuresApproved}/${figuresRun} articles fully judge-approved (${figuresRevised} revised once); unapproved figures are surfaced at content_import`)
 log(`image-nb2: ${imagesTotal} photoreal image(s) across ${imagesArticles} article(s) (optional, budget 2/1000 words; over-budget blocks at content_import)`)
 
@@ -609,6 +757,12 @@ const buildClusterLinkPrompt = (cluster, specs) => {
     bundle_path: `${outDir}/${s.content_id}.bundle.json`,
   }))
   const siblings = _sibs(specs)
+  // The directed link plan the cluster-pass designed (from_slug -> to_slug at a
+  // concept). The authors were asked to leave a natural anchor phrase for each edge
+  // whose from_slug is theirs, so these are the FIRST-CHOICE anchors — the pass
+  // prefers a planned anchor and only falls back to an opportunistic phrase when a
+  // planned one did not materialize. Rides every spec via cluster_brief.
+  const linkPlan = ((specs[0] && specs[0].cluster_brief && specs[0].cluster_brief.link_plan) || [])
   return [
     `Wire blog→blog internal links across ONE topic cluster: "${cluster}".`,
     '',
@@ -618,6 +772,15 @@ const buildClusterLinkPrompt = (cluster, specs) => {
     '   the TARGET article is for. Read each bundle body ONLY to pick a real anchor phrase from',
     '   the SOURCE; judge intent-match against the declared `intent`, not by re-reading target prose:',
     JSON.stringify(arts, null, 2),
+    linkPlan.length
+      ? 'DESIGNED LINK PLAN (first-choice edges the cluster strategist planned; the authors were asked\n' +
+        'to leave a natural anchor phrase for each. For every edge, PREFER wiring exactly this: find the\n' +
+        'planned anchor phrase in from_slug\'s body and link it to to_slug. Only fall back to your own\n' +
+        'opportunistic anchor when the planned phrase is genuinely absent, and still honor every hard rule\n' +
+        '(verbatim phrase, intent-match, one per target). Do NOT treat these as a cap — add a well-earned\n' +
+        'edge the plan missed; do NOT force an edge whose planned anchor never made it into the body:\n' +
+        JSON.stringify(linkPlan, null, 2)
+      : '(no designed link plan for this cluster — plan the graph from intent + topology as below)',
     siblings.length
       ? 'EXISTING cluster siblings (already-produced posts in this SAME cluster — from an earlier batch\n' +
         'or another planning route). They are valid link TARGETS exactly like batch articles (their\n' +
@@ -753,6 +916,9 @@ return {
   intentChecked,
   intentSatisfied,
   intentRevised,
+  editorialChecked,
+  editorialPassed,
+  editorialRevised,
   figuresRun,
   figuresApproved,
   figuresRevised,

@@ -75,8 +75,20 @@ host (SignalBots' current layout) so an existing host adopts with little config:
 
 ## Status
 
-v0.1.2 — extracted, neutralized, and consumed by SignalBots (its first host) through
+v0.1.4 — extracted, neutralized, and consumed by SignalBots (its first host) through
 its `content_pipeline.keel_adapter` host adapter: the intake routes, the generator, the
 figures/hero/external-links stages, and glossary authoring are all in use. The package
 ships no concrete adapter of its own — a host provides one and points
 `KEEL_CONTENT["adapter"]` at it.
+
+The generation workflow (`tools/*.workflow.js`) is the canonical orchestration; hosts
+consume it from the package rather than forking it locally. As of v0.1.4 it carries:
+an **editorial-quality gate** (an independent reader that judges prose flow/cohesion/
+voice/seams after the intent gate and rewrites once on fail), the **intent gate ordered
+before the relevance gate** (so links + visuals are judged against the final body), a
+brief-stage **glossary_targets** selection and directed **link_plan** (designed internal
+links), a **brief overlap precheck**, and a **shared visual-reconciliation** contract on
+every body-revising stage. Follow-up (not schema-blocking): the default `agent-author-brief`
+and `cluster-internal-links` prompts still describe the pre-v0.1.4 linking flow; a host
+using the defaults gets a working pipeline but not the fully-designed glossary/link
+behavior until those two default prompts are aligned.

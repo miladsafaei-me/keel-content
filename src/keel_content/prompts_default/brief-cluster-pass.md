@@ -21,6 +21,17 @@ a binding contract every per-article brief writer receives.
 4. **Link-terms.** The glossary-style concepts members must LINK (to the glossary
    or the owning sibling) instead of re-explaining inline. Definitional real estate
    belongs to the glossary; the cluster's articles spend their words on the need.
+5. **Link plan (directed).** Turn `element_ownership` into concrete DIRECTED links:
+   for each article that only REFERENCES a concept a sibling OWNS, add an edge
+   `{from_slug, to_slug, anchor_concept, why}` — "article A should link to sibling B
+   at concept C". This is where the internal-link graph is DESIGNED, not left to a
+   post-hoc phrase hunt: the author of `from_slug` is handed these edges and writes a
+   natural sentence that can anchor each one, so the later cluster-link pass wires a
+   deliberate anchor instead of an opportunistic one. Rules: `from_slug` and `to_slug`
+   are real member (or produced sibling) slugs and differ; every spoke links to the
+   pillar at the pillar's core concept; `anchor_concept` is the concept as a reader
+   would phrase it (what the anchor text is ABOUT), not a raw slug. Keep it to the
+   genuinely useful edges — a designed link the reader benefits from, never a quota.
 
 ## Produced content is settled law
 
@@ -51,6 +62,10 @@ completely enough that a newcomer can be slotted in without re-running you.
       {"slug": "how-to-x", "excludes": ["does not compare options — links to best-x-tools"]}
     ],
     "link_terms": ["<Domain Term A>", "<Domain Term B>"],
+    "link_plan": [
+      {"from_slug": "how-to-x", "to_slug": "best-x-tools", "anchor_concept": "choosing a tool", "why": "how-to readers hit the choice step; the roundup owns it"},
+      {"from_slug": "how-to-x", "to_slug": "x-pillar", "anchor_concept": "what X is", "why": "spoke links up to the pillar's core definition"}
+    ],
     "notes": "anything a per-article brief writer must know that fits nowhere above"
   }
 }
@@ -61,4 +76,7 @@ completely enough that a newcomer can be slotted in without re-running you.
 - Every element in `element_ownership` has exactly one owner; every owner slug must
   be a real member (or produced sibling) slug.
 - Fences must be actionable for a writer — name the owning slug to link to.
+- Every `link_plan` edge uses real, distinct member/sibling slugs; `anchor_concept`
+  is a reader-facing concept, not a slug; do not invent edges the reader gains nothing
+  from.
 - English only; concrete; no filler.

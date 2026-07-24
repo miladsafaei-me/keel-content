@@ -48,7 +48,18 @@ the gaps.
    in `figure_opportunities` — a hint, never a binding count or placement: the
    author decides the final figure set from the finished text (minimum one
    figure per article is enforced downstream).
-7. **Design the flow as the user's mental path.** The headings outline follows the
+7. **Select the glossary targets.** Name the 3–8 glossary terms genuinely CENTRAL
+   to this article — the entity plus the core concepts a reader must understand to
+   act — and record them in `glossary_targets` (each as `term` + `why` it is central).
+   These are the terms the author weaves into the body and links on first mention, so
+   the selection is deliberate HERE instead of the author guessing from a flat
+   allowlist of every glossary page on the site. Rules: pick only real,
+   article-defining concepts (never pad to a count); a concept the cluster contract
+   marks as sibling-owned or on the link-terms list belongs here (it is a link target,
+   not something to re-explain); `glossary_targets` may be `[]` only when no glossary
+   term is genuinely central. You NAME the need — the author links each term only if
+   its page actually exists in the live indexable allowlist handed to generation.
+8. **Design the flow as the user's mental path.** The headings outline follows the
    reader's journey from question → understanding → decision/action. Every H2 must
    answer a named part of the problem; no heading exists to host a keyword. **Keep
    the naturally-interrogative steps as questions in the outline** (don't flatten a
@@ -58,7 +69,7 @@ the gaps.
    entry in question form so the author keeps it interrogative. Value-gated, not a
    default: at most ~1 in 3 headings, never a process-step label, never a duplicate
    of an FAQ question (the author applies the full guardrails).
-8. **Respect the cluster contract.** When the prompt hands you a `cluster_brief`
+9. **Respect the cluster contract.** When the prompt hands you a `cluster_brief`
    (element ownership across siblings, scope fences, link-terms) it is BINDING:
    - never claim an element another sibling owns — plan a link to that sibling
      instead;
@@ -66,12 +77,12 @@ the gaps.
      reconcile's — they are unioned into the row);
    - concepts on the cluster's link-terms list are linked (glossary/sibling), not
      re-explained inline.
-9. **Set the keyword-usage contract.** List the keywords the author may weave in.
+10. **Set the keyword-usage contract.** List the keywords the author may weave in.
    Their purpose is (a) understanding the intent's phrasing space and (b) natural,
    LOW-DENSITY usage — a keyword appears where prose would say it anyway. NEVER a
    quota, NEVER one-heading-per-keyword, NEVER stuffing (see {{SEO_GUIDELINES}}; the
    intent gate rejects unnatural density).
-10. **Decide the business bridge.** From the spec's `bridge_candidates` (the
+11. **Decide the business bridge.** From the spec's `bridge_candidates` (the
    same-segment {{PROJECT_NAME}} surfaces this article MAY route to per
    {{PARTNER_MODEL}} — you never invent one), decide whether one of them is the
    reader's **genuine next step** on the
@@ -104,7 +115,7 @@ the gaps.
      core question and NEVER after the conclusion or below the last component.
      Reflect this in `headings_outline` too: place the bridge heading second-to-last.
    - `rationale` — why this bridge (or none) is the honest read of the intent.
-11. **Judge feasibility.** Decide who can produce this content:
+12. **Judge feasibility.** Decide who can produce this content:
    - `llm_full` — the pipeline author can write everything.
    - `llm_with_assets` — the author writes the article but 1+ essential/complementary
      elements need a human (real platform screenshots, first-party data).
@@ -136,6 +147,10 @@ the gaps.
     ],
     "complementary_elements": [
       {"element": "interactive position-size calculator", "why": "no ranking page offers one — the user's sizing step done for them"}
+    ],
+    "glossary_targets": [
+      {"term": "<core concept A>", "why": "the article's core mechanism — the reader needs the precise definition to follow everything after"},
+      {"term": "<core concept B>", "why": "used throughout a key section; linking it lets the body stay concrete without a definitional detour"}
     ],
     "figure_opportunities": [
       {"concept": "how the two workflow paths differ end to end",
