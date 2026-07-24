@@ -15,6 +15,12 @@ export const meta = {
 // Output: { normalizations: {cid: canonical_key}, adjudications: [...] } — write it
 //         to a file in the session and run `intent_registry.py apply <worklist> <that>`.
 
+// Per-stage model tiering (TOKEN-OPTIMIZATION-PLAN.md). Both stages here are
+// structured classification / judgement against a written rubric — Sonnet's
+// strength — so neither runs on Opus. model: is set EXPLICITLY on every agent()
+// call rather than inheriting the session model.
+const M_JUDGE = 'sonnet'
+
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const B = (A && A.bucket) || A
 const buckets = (B && Array.isArray(B.buckets) && B.buckets) || []
@@ -195,6 +201,7 @@ const perBucket = await pipeline(
         phase: 'Normalize',
         schema: NORMALIZE_SCHEMA,
         agentType: 'general-purpose',
+        model: M_JUDGE,
       })
       for (const a of (res && res.assignments) || []) keyByCid[a.content_id] = a.canonical_key
     }
@@ -211,6 +218,7 @@ const perBucket = await pipeline(
           phase: 'Adjudicate',
           schema: ADJUDICATE_SCHEMA,
           agentType: 'general-purpose',
+          model: M_JUDGE,
         }).then((v) => v && ({
           canonical_key: g.canonical_key,
           intent_frame: g.intent_frame,

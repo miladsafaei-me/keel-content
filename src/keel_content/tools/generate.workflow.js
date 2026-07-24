@@ -77,6 +77,19 @@ if (!indexableUrls.length && !(A && A.dryRun)) {
 }
 const contents = A.limit ? all.slice(0, A.limit) : all
 
+// Per-stage model tiering (TOKEN-OPTIMIZATION-PLAN.md). Every agent() call sets
+// model: EXPLICITLY — never rely on session-model inheritance — so per-article
+// usage cost drops without touching quality. Re-tiering a whole class of stage is
+// a one-line change here.
+//   M_AUTHOR    — substance authoring (irreplaceable generative quality)
+//   M_EDITORIAL — the prose-quality gate + its flow-rewrite (owner-mandated Opus)
+//   M_JUDGE     — verification / judgement / classification / spec-driven visuals
+//   M_MECH      — pure script-runner agents (run a command, return its output)
+const M_AUTHOR = 'opus'
+const M_EDITORIAL = 'opus'
+const M_JUDGE = 'sonnet'
+const M_MECH = 'haiku'
+
 phase('Generate')
 log(`generating ${contents.length} blog draft(s) — one fresh, independent agent each`)
 
@@ -97,7 +110,11 @@ const buildPrompt = (spec) => {
     'Generate ONE project blog article from the spec below, following the author brief IN FULL.',
     '',
     `1. Read the author brief first: ${briefPath}`,
-    `2. repoRoot for every other read (BLOG.md, BUSINESS.md, CLAUDE.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
+    `2. repoRoot for every other read (BLOG.md, BUSINESS.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
+    '   You do NOT need to load the full CLAUDE.md — the author brief already distills every',
+    '   authoring-relevant rule (compliance, trade-semantic colors, English-only, the internal-link',
+    '   + noindex model). Its git/deploy/podman/CI/registry sections do not apply to authoring; if you',
+    '   must verify a compliance edge case, grep the one relevant CLAUDE.md section rather than reading it whole.',
     hasTranscript
       ? '3. THIS IS A YOUTUBE-SOURCED ARTICLE. Your PRIMARY source material is the video transcript ' + (transcriptPath ? `— READ it FIRST from this file: ${transcriptPath}` : 'at the END of this prompt') + '. Write the article FROM it. Read the author brief\'s "YouTube-transcript-sourced articles" section and follow it exactly: re-explain the ideas in ORIGINAL prose and project\' voice (NEVER republish the transcript verbatim or near-verbatim), keep only what is accurate, and DROP the creator\'s self-promotion, competitor products, affiliate pitches, and any unverifiable win-rate / "risk-free" / "guaranteed" claims (reframe such claims skeptically, in our voice). The source video is auto-attached to the post and embedded by the template, so do NOT add a [[VIDEO:...]] embed of the SOURCE video yourself. Any competitor_urls in the spec are only secondary SERP context for what readers expect.'
       : '3. Use your web-research tools to study the competitor URLs and the topic. If WebSearch/WebFetch are not already loaded, load them via ToolSearch first.',
@@ -144,6 +161,7 @@ const buildGatePrompt = (spec) =>
     '   The proposed links = its "external_sources" array.',
     '3. For EACH item in external_sources: WebFetch the url (load WebFetch via ToolSearch',
     '   first if needed), then judge relevance to THIS article + anchor honesty per the brief.',
+    '   Fetch each DISTINCT url at most once — if the same url appears twice, reuse the fetch.',
     '   Keep (anchor rewritten if it over-claims) or drop. Drop generic homepages/section hubs.',
     '4. Overwrite the bundle\'s "external_sources" with ONLY the kept (anchor-corrected) items.',
     '   Leave every other field untouched. Write the bundle back to the SAME path.',
@@ -192,7 +210,9 @@ const buildFiguresPrompt = (spec) =>
     '5. Patch the "figures" array into that bundle per the brief, leaving every other',
     '   field untouched (unless the fallback in the brief applies). Write the bundle',
     `   back to its SAME path. slug MUST stay "${spec.slug}".`,
-    '6. Return ONLY the compact one-line JSON status described in the brief.',
+    '6. Return the compact JSON status described in the brief, and ADD a boolean',
+    '   "has_image_requests" field: true iff the bundle\'s "image_requests" array is',
+    '   present and non-empty (you already read the bundle — just report what you saw).',
   ].join('\n')
 
 const buildFigureJudgePrompt = (spec) =>
@@ -222,6 +242,39 @@ const buildFiguresRevisePrompt = (spec, verdict) => {
     `   "figures" entries, write back to the SAME path (slug stays "${spec.slug}").`,
     '6. Return ONLY the compact one-line JSON status described in the brief.',
   ].join('\n')
+}
+
+// Status the figures author returns. `has_image_requests` powers the NB2 no-op
+// guard: the images stage is skipped entirely when the bundle carries no
+// image_requests (the author read the bundle here, so it is the cheapest place to
+// learn this — the workflow sandbox has no filesystem of its own).
+const FIGURES_STATUS_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    slug: { type: 'string' },
+    figures: { type: 'number' },
+    has_image_requests: { type: 'boolean', description: 'true iff the bundle\'s image_requests array is present and non-empty' },
+    ok: { type: 'boolean' },
+  },
+  required: ['has_image_requests'],
+}
+
+// Summary the Haiku runner returns after executing overlap_score.py — mirrors the
+// script's stdout SUMMARY line. gray_band > 0 triggers the Sonnet confirm pass.
+const OVERLAP_RUN_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    written: { type: 'boolean' },
+    bundles: { type: 'number' },
+    pairs: { type: 'number' },
+    blocked: { type: 'number' },
+    flagged: { type: 'number' },
+    gray_band: { type: 'number' },
+    top_score: { type: 'number' },
+  },
+  required: ['pairs', 'gray_band'],
 }
 
 const FIGURE_VERDICT_SCHEMA = {
@@ -535,6 +588,7 @@ for (let w = 0; w < waves.length; w++) {
         label: `write:${spec.slug}`,
         phase: 'Generate',
         agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
+        model: M_AUTHOR,
       }).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
     // Stage 2 — INTENT GATE FIRST. Any body revision it triggers happens before
     // the relevance gate, figures, images, and hero, so every later stage sees the
@@ -545,6 +599,7 @@ for (let w = 0; w < waves.length; w++) {
         label: `intent-gate:${spec.slug}`,
         phase: 'Intent gate',
         agentType: 'general-purpose',
+        model: M_JUDGE,
         schema: INTENT_VERDICT_SCHEMA,
       })
       let revised = false
@@ -553,6 +608,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `revise:${spec.slug}`,
           phase: 'Intent gate',
           agentType: 'general-purpose',
+          model: M_AUTHOR, // re-authors body to add missing substance — stays Opus
         })
         revised = true
         // Re-gate once to record the honest final verdict in the bundle.
@@ -560,6 +616,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `re-gate:${spec.slug}`,
           phase: 'Intent gate',
           agentType: 'general-purpose',
+          model: M_JUDGE,
           schema: INTENT_VERDICT_SCHEMA,
         })
       }
@@ -575,6 +632,7 @@ for (let w = 0; w < waves.length; w++) {
         label: `editorial-gate:${spec.slug}`,
         phase: 'Editorial gate',
         agentType: 'general-purpose',
+        model: M_EDITORIAL, // owner-mandated Opus: the prose-quality gate is never downgraded
         schema: EDITORIAL_VERDICT_SCHEMA,
       })
       let revised = false
@@ -583,6 +641,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `editorial-revise:${spec.slug}`,
           phase: 'Editorial gate',
           agentType: 'general-purpose',
+          model: M_EDITORIAL, // the flow-rewrite it triggers stays Opus too
         })
         revised = true
         // Re-judge once to record the honest final verdict in the bundle.
@@ -590,6 +649,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `editorial-rejudge:${spec.slug}`,
           phase: 'Editorial gate',
           agentType: 'general-purpose',
+          model: M_EDITORIAL,
           schema: EDITORIAL_VERDICT_SCHEMA,
         })
       }
@@ -604,19 +664,28 @@ for (let w = 0; w < waves.length; w++) {
         label: `gate:${spec.slug}`,
         phase: 'Relevance gate',
         agentType: 'general-purpose',
+        model: M_JUDGE,
       }).then((gate) => ({ ...judged, gated: true, gate }))
     },
     async (judged, spec) => {
       if (!figuresPath || !judged || judged.status == null) return { ...judged, figures: null }
-      await agent(buildFiguresPrompt(spec), {
+      const figAuthor = await agent(buildFiguresPrompt(spec), {
         label: `figures:${spec.slug}`,
         phase: 'Figures',
         agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
+        model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
+        schema: FIGURES_STATUS_SCHEMA,
       })
+      // NB2 no-op guard: the figures author already read the bundle, so it reports
+      // whether the bundle carries any image_requests. When it explicitly reports
+      // false we skip spawning the images-author agent entirely downstream (saves one
+      // agent per image-less article). Missing/null => run images (safe default).
+      const hasImageRequests = !(figAuthor && figAuthor.has_image_requests === false)
       let verdict = await agent(buildFigureJudgePrompt(spec), {
         label: `figure-judge:${spec.slug}`,
         phase: 'Figures',
         agentType: 'general-purpose',
+        model: M_JUDGE,
         schema: FIGURE_VERDICT_SCHEMA,
       })
       let revised = false
@@ -625,6 +694,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `figure-revise:${spec.slug}`,
           phase: 'Figures',
           agentType: 'general-purpose',
+          model: M_JUDGE,
         })
         revised = true
         // Re-judge once to record the honest final verdict in the bundle.
@@ -632,19 +702,25 @@ for (let w = 0; w < waves.length; w++) {
           label: `figure-rejudge:${spec.slug}`,
           phase: 'Figures',
           agentType: 'general-purpose',
+          model: M_JUDGE,
           schema: FIGURE_VERDICT_SCHEMA,
         })
       }
-      return { ...judged, figures: { approved: !!(verdict && verdict.all_approved), revised } }
+      return { ...judged, hasImageRequests, figures: { approved: !!(verdict && verdict.all_approved), revised } }
     },
     async (judged, spec) => {
       if (!imagesPath || !judged || judged.status == null) return { ...judged, images: null }
+      // NB2 no-op guard: the figures stage already reported whether the bundle has
+      // any image_requests. When it has none (common case — the author used a drawn
+      // figure instead) skip spawning the images-author agent entirely.
+      if (judged.hasImageRequests === false) return { ...judged, images: { count: 0, approved: true, revised: false } }
       // Author-images no-ops fast when there are no image_requests (common case);
       // only spin up the vision judge when it actually rendered something.
       const authored = await agent(buildImagesPrompt(spec), {
         label: `images:${spec.slug}`,
         phase: 'Images',
         agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
+        model: M_JUDGE, // spec-driven render orchestration (test-first Sonnet)
         schema: IMAGE_AUTHOR_STATUS_SCHEMA,
       })
       const rendered = (authored && Number(authored.images)) || 0
@@ -653,6 +729,7 @@ for (let w = 0; w < waves.length; w++) {
         label: `image-judge:${spec.slug}`,
         phase: 'Images',
         agentType: 'general-purpose',
+        model: M_JUDGE,
         schema: IMAGE_VERDICT_SCHEMA,
       })
       let revised = false
@@ -661,6 +738,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `image-revise:${spec.slug}`,
           phase: 'Images',
           agentType: 'general-purpose',
+          model: M_JUDGE,
         })
         revised = true
         // Re-judge once to record the honest final verdict in the bundle.
@@ -668,6 +746,7 @@ for (let w = 0; w < waves.length; w++) {
           label: `image-rejudge:${spec.slug}`,
           phase: 'Images',
           agentType: 'general-purpose',
+          model: M_JUDGE,
           schema: IMAGE_VERDICT_SCHEMA,
         })
       }
@@ -679,6 +758,7 @@ for (let w = 0; w < waves.length; w++) {
         label: `hero:${spec.slug}`,
         phase: 'Hero',
         agentType: 'general-purpose',
+        model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
       }).then((heroStatus) => ({ ...judged, hero: true, heroStatus }))
     }
   )
@@ -807,6 +887,7 @@ const linkResults = await parallel(
       label: `cluster-links:${cluster.slice(0, 28)}`,
       phase: 'Cluster links',
       agentType: 'general-purpose', // Tools: * — needs Read + Write
+      model: M_JUDGE, // blog→blog anchor planning is judgement, not authoring
     }).then((status) => ({ cluster, articles: specs.length, status }))
   )
 )
@@ -820,30 +901,63 @@ log(`cluster-linking done: ${linked.length}/${linkClusters.length} cluster(s) wi
 // not modify bundles, but its output now gates at import: content_import hard-blocks
 // both articles of any pair scoring >=75 (60–74 are flagged-but-imported). So a true
 // near-duplicate pair can no longer silently publish — a human must resolve it first.
+// The pairwise scoring itself is deterministic (TOKEN-OPTIMIZATION-PLAN.md §1):
+// tools/content_pipeline/overlap_score.py reads every bundle body and computes the
+// shared-H2 / intro-similarity / repeated-stats / duplicate-widget signals with zero
+// LLM tokens, writing overlap-audit.json in the exact schema content_import consumes
+// (block: true on score>=75). A cheap Haiku agent just runs the script; then — ONLY
+// if the script flagged any pair in the gray band straddling the 75 block line — a
+// single Sonnet agent re-reads just those bundle pairs and confirms/overrides `block`.
+// Pairs far from the threshold never touch an LLM.
 phase('Overlap audit')
 const auditBundles = ok.filter((r) => r && r.status != null)
 let overlapAudit = { status: 'skipped (need >=2 bundles)' }
 if (auditBundles.length >= 2) {
-  const auditPrompt = [
-    'Run the Layer-4 overlap audit across a just-generated batch of blog bundles.',
-    'Your scores have real consequences: content_import HARD-BLOCKS both articles of',
-    'any pair you score >=75, and flags 60-74 pairs for human review — so calibrate',
-    'scores honestly rather than leniently, especially near those thresholds.',
-    '',
-    `1. Read the overlap-audit brief IN FULL: ${repoRoot}/content-pipeline/prompts/overlap-audit.md`,
-    `2. The bundles are at ${outDir}. Slugs to compare (read each bundle's body_markdown + h1 +`,
-    `   meta_description; use Bash+python/jq to pull fields so you don't overflow context):`,
-    `   ${auditBundles.map((r) => r.slug).join(', ')}`,
-    `3. Do the audit per the brief and write ${outDir}/overlap-audit.json. Do NOT modify any bundle.`,
-    '4. Return ONLY the compact one-line JSON status described in the brief.',
-  ].join('\n')
-  const auditStatus = await agent(auditPrompt, {
+  const scorePath = `${repoRoot}/tools/content_pipeline/overlap_score.py`
+  const auditPath = `${outDir}/overlap-audit.json`
+  const runSummary = await agent([
+    'Run the deterministic Layer-4 overlap scorer over a just-generated bundle batch.',
+    `Execute EXACTLY this command with Bash: python3 ${scorePath} ${outDir} ${auditBundles.map((r) => r.slug).join(' ')}`,
+    `It writes ${auditPath} and prints a line beginning "SUMMARY " followed by JSON.`,
+    'Return that summary JSON\'s fields (written, pairs, blocked, flagged, gray_band, top_score).',
+    'Do NOT modify any bundle and do NOT compute anything yourself — just run the script and report.',
+  ].join('\n'), {
     label: 'overlap-audit',
     phase: 'Overlap audit',
-    agentType: 'general-purpose', // Tools: * — needs Read + Bash + Write
+    agentType: 'general-purpose', // Tools: * — needs Bash
+    model: M_MECH,
+    effort: 'low',
+    schema: OVERLAP_RUN_SCHEMA,
   })
-  overlapAudit = { status: auditStatus }
-  log(`overlap-audit done: ${typeof auditStatus === 'string' ? auditStatus.slice(0, 160) : ''}`)
+  const grayBand = (runSummary && Number(runSummary.gray_band)) || 0
+  overlapAudit = { status: runSummary, grayReviewed: 0 }
+  log(`overlap-audit scored: ${(runSummary && runSummary.pairs) || 0} pair(s), ` +
+      `${(runSummary && runSummary.blocked) || 0} block(s), ${grayBand} in the gray band`)
+  // Gray-band confirm/override — Sonnet, only when the deterministic score put a pair
+  // near the 75 line. The agent edits overlap-audit.json in place (sandbox has no FS).
+  if (grayBand > 0) {
+    const grayStatus = await agent([
+      'Confirm or override the BLOCK flag on the borderline overlap pairs of a blog batch.',
+      `1. Read the overlap-audit brief for the block rule IN FULL: ${repoRoot}/content-pipeline/prompts/overlap-audit.md`,
+      `2. Read ${auditPath}. Its scores are from a deterministic scorer. For EVERY pair with`,
+      `   a score in the inclusive range 65..84 (the gray band around the 75 block line):`,
+      `   read BOTH bundles' body_markdown at ${outDir}/<...>.bundle.json (use Bash+python/jq`,
+      `   to pull fields so you don't overflow context; a slug maps to the bundle whose "slug"`,
+      '   field equals it), then judge whether ONE page would satisfy both readers\' need.',
+      '3. Set that pair\'s "block" to true iff it is a genuine near-duplicate a human must resolve,',
+      '   else false. Do NOT change any score, and do NOT touch pairs outside 65..84.',
+      `4. Write ${auditPath} back with the same schema (pairs sorted by score desc; keep "flagged"`,
+      '   as the pairs with score>=60). Modify NO bundle.',
+      '5. Return ONLY compact JSON: {"reviewed":N,"blocked_after":M}.',
+    ].join('\n'), {
+      label: 'overlap-gray-review',
+      phase: 'Overlap audit',
+      agentType: 'general-purpose', // Tools: * — needs Read + Bash + Write
+      model: M_JUDGE,
+    })
+    overlapAudit.grayReviewed = grayBand
+    log(`overlap-audit gray-band review done: ${typeof grayStatus === 'string' ? grayStatus.slice(0, 120) : ''}`)
+  }
 } else {
   log('overlap-audit skipped (fewer than 2 generated bundles to compare)')
 }
@@ -877,6 +991,7 @@ if (glossaryTerms.length && okBundles.length) {
     label: 'glossary-gap',
     phase: 'Glossary gap',
     agentType: 'general-purpose', // Tools: * — needs Read + Bash + Write
+    model: M_JUDGE,
   })
   glossary = { status: gapStatus }
   log(`glossary-gap done: ${typeof gapStatus === 'string' ? gapStatus.slice(0, 120) : ''}`)

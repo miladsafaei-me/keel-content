@@ -23,6 +23,12 @@ export const meta = {
 //                      generate.workflow.js: an unthrottled fan-out trips API limits).
 //   args.limit       : optional cap for a dry-run (limit: 1 first, inspect, then full).
 
+// Per-stage model tiering (TOKEN-OPTIMIZATION-PLAN.md). Every stage in the brief
+// workflow is planning / classification / adversarial judgement against a written
+// rubric — Sonnet's strength — so the whole workflow runs on Sonnet (no authoring of
+// substance happens here). model: is set EXPLICITLY on every agent() call.
+const M_JUDGE = 'sonnet'
+
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const contents = Array.isArray(A.contents) ? A.contents : []
 const briefPath = A.briefPath || ''
@@ -206,6 +212,7 @@ for (const [key, specs] of bySlug) {
     phase: 'Cluster pass',
     schema: CLUSTER_SCHEMA,
     agentType: 'general-purpose',
+    model: M_JUDGE,
   })
   if (res && res.cluster_brief) {
     clusterBriefs.set(key, res.cluster_brief)
@@ -263,20 +270,20 @@ const judgePrompt = (spec, briefEntry) => [
 const briefOne = async (spec) => {
   let entry = await agent(buildPrompt(spec, null), {
     label: `brief:${(spec.slug || '').slice(0, 40)}`,
-    phase: 'Brief', schema: BRIEF_SCHEMA, agentType: 'general-purpose',
+    phase: 'Brief', schema: BRIEF_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
   })
   if (!entry) return null
   if (entry.slug !== spec.slug) entry.slug = spec.slug
   let verdict = await agent(judgePrompt(spec, entry), {
     label: `judge:${(spec.slug || '').slice(0, 40)}`,
-    phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose',
+    phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
   })
   let revised = false
   if (verdict && verdict.verdict === 'revise') {
     const feedback = { ...verdict, _previous: entry }
     const second = await agent(buildPrompt(spec, feedback), {
       label: `revise:${(spec.slug || '').slice(0, 40)}`,
-      phase: 'Judge', schema: BRIEF_SCHEMA, agentType: 'general-purpose',
+      phase: 'Judge', schema: BRIEF_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
     })
     if (second) {
       if (second.slug !== spec.slug) second.slug = spec.slug
@@ -284,7 +291,7 @@ const briefOne = async (spec) => {
       revised = true
       verdict = await agent(judgePrompt(spec, entry), {
         label: `rejudge:${(spec.slug || '').slice(0, 38)}`,
-        phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose',
+        phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
       })
     }
   }
@@ -338,7 +345,25 @@ const OVERLAP_SCHEMA = {
       } } },
   },
 }
+// Deterministic pairwise brief-overlap scoring (TOKEN-OPTIMIZATION-PLAN.md §2). The
+// briefs already carry all the signal in memory (title/h1, intent_statement,
+// headings_outline, essential elements, scope_excludes), so the bulk is computed in
+// plain JS — zero LLM tokens. Only pairs in the gray band around the 75 resolve line
+// go to a single Sonnet agent for a merge/rescope/keep recommendation.
+const _briefTokRe = /[a-z0-9]+/g
+const _briefStop = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'your', 'you',
+  'are', 'how', 'what', 'why', 'from', 'have', 'has', 'can', 'will', 'a', 'an', 'of',
+  'to', 'in', 'on', 'is', 'it', 'as', 'at', 'or', 'by', 'be', 'best', 'top', 'guide'])
+const _tokSet = (s) => new Set((String(s || '').toLowerCase().match(_briefTokRe) || []).filter((t) => !_briefStop.has(t)))
+const _tokSetMany = (arr) => _tokSet((arr || []).join(' '))
+const _jaccard = (a, b) => {
+  if (!a.size && !b.size) return 0
+  let inter = 0
+  for (const x of a) if (b.has(x)) inter++
+  return inter / (a.size + b.size - inter)
+}
 let overlapWarnings = []
+let grayReviewed = 0
 if (briefs.length >= 2) {
   const cores = briefs.map((b) => ({
     slug: b.slug,
@@ -348,33 +373,91 @@ if (briefs.length >= 2) {
     headings: b.brief.headings_outline || [],
     essential: (b.brief.essential_elements || []).map((e) => e.element),
     scope_excludes: b.brief.scope_excludes || [],
+    _titleTok: _tokSet(`${b.brief.title} ${b.brief.h1}`),
+    _headTok: _tokSetMany(b.brief.headings_outline || []),
+    _essTok: _tokSetMany((b.brief.essential_elements || []).map((e) => e.element)),
+    _intentTok: _tokSet(b.brief.intent_statement),
+    _exclTok: _tokSetMany(b.brief.scope_excludes || []),
   }))
-  const overlapRes = await agent([
-    'Precheck a just-briefed batch of blog articles for NEAR-DUPLICATE pairs — pairs whose',
-    'briefs describe so much of the same underlying user need that ONE page would satisfy both.',
-    'This runs BEFORE generation: catching a duplicate here saves the full cost of writing,',
-    'gating, drawing figures, and designing a hero for BOTH articles (which would then hard-block',
-    'at import anyway).',
-    '',
-    'Score each genuinely-overlapping pair 0-100 on shared USER NEED (not just shared words):',
-    'weigh overlapping essential elements, near-identical headings_outline, and an intent_statement',
-    'that answers the same question. scope_excludes that already fence the pair apart LOWER the score.',
-    'Only report pairs scoring >=60. For each: score, a one-line reason, and a recommendation',
-    '(merge = one page should own the need; rescope = split the need with fences; keep = they only',
-    'look similar but serve distinct needs). Distinct qualifier spokes (for-scalping vs -for-API) are',
-    'NORMALLY keep. Default to NOT flagging when unsure — false alarms cost human review time.',
-    '',
-    'BRIEF CORES:',
-    JSON.stringify(cores, null, 2),
-    '',
-    'Return the pairs array (empty if nothing overlaps >=60).',
-  ].join('\n'), {
-    label: 'brief-overlap',
-    phase: 'Overlap precheck',
-    schema: OVERLAP_SCHEMA,
-    agentType: 'general-purpose',
-  })
-  overlapWarnings = ((overlapRes && overlapRes.pairs) || []).filter((p) => p && p.score >= 60)
+  // Score every unordered pair from need-overlap signals; scope_excludes that name
+  // the OTHER article's subject are an explicit fence that lowers the score.
+  const detPairs = []
+  for (let i = 0; i < cores.length; i++) {
+    for (let j = i + 1; j < cores.length; j++) {
+      const x = cores[i], y = cores[j]
+      const sTitle = _jaccard(x._titleTok, y._titleTok)
+      const sHead = _jaccard(x._headTok, y._headTok)
+      const sEss = _jaccard(x._essTok, y._essTok)
+      const sIntent = _jaccard(x._intentTok, y._intentTok)
+      let raw = 0.30 * sTitle + 0.30 * sHead + 0.25 * sEss + 0.15 * sIntent
+      // Fence discount: if each brief's scope_excludes already reference the other's
+      // subject, they are deliberately split — pull the score down.
+      const fence = Math.max(_jaccard(x._exclTok, y._titleTok), _jaccard(y._exclTok, x._titleTok))
+      raw = Math.max(0, raw - 0.20 * fence)
+      const score = Math.round(100 * raw)
+      const [slug_a, slug_b] = [x.slug, y.slug].sort()
+      detPairs.push({ slug_a, slug_b, score })
+    }
+  }
+  // Gray band around the 75 resolve line — the only pairs a Sonnet agent judges.
+  const GRAY_LO = 60, GRAY_HI = 80
+  const grayPairs = detPairs.filter((p) => p.score >= GRAY_LO && p.score <= GRAY_HI)
+  grayReviewed = grayPairs.length
+  const grayBySlug = new Map()
+  if (grayPairs.length) {
+    const coreBySlug = new Map(cores.map((c) => [c.slug, c]))
+    const grayCores = [...new Set(grayPairs.flatMap((p) => [p.slug_a, p.slug_b]))]
+      .map((s) => coreBySlug.get(s))
+      .map((c) => ({ slug: c.slug, title: c.title, h1: c.h1, intent: c.intent,
+        headings: c.headings, essential: c.essential, scope_excludes: c.scope_excludes }))
+    const overlapRes = await agent([
+      'A deterministic scorer flagged these BORDERLINE brief pairs as possibly near-duplicate —',
+      'pairs whose briefs may describe so much of the same underlying user need that ONE page',
+      'would satisfy both. This runs BEFORE generation: catching a real duplicate here saves the',
+      'full cost of writing + gating + figures + hero for BOTH articles (which would then hard-block',
+      'at import anyway). Confirm or clear each flagged pair.',
+      '',
+      'For each pair, weigh shared USER NEED (not just shared words): overlapping essential elements,',
+      'near-identical headings, an intent_statement that answers the same question. scope_excludes that',
+      'already fence the pair apart LOWER the overlap. Give a 0-100 score, a one-line reason, and a',
+      'recommendation (merge = one page should own the need; rescope = split with fences; keep = they',
+      'only look similar but serve distinct needs). Distinct qualifier spokes (for-scalping vs -for-API)',
+      'are NORMALLY keep. Default to keep when unsure — false alarms cost human review time.',
+      '',
+      'FLAGGED PAIRS (deterministic score in parentheses — re-judge, do not just echo it):',
+      grayPairs.map((p) => `  - ${p.slug_a} ~ ${p.slug_b} (${p.score})`).join('\n'),
+      '',
+      'BRIEF CORES (only the briefs involved in a flagged pair):',
+      JSON.stringify(grayCores, null, 2),
+      '',
+      'Return the pairs array — one entry per FLAGGED pair above, with your score/reason/recommendation.',
+    ].join('\n'), {
+      label: 'brief-overlap',
+      phase: 'Overlap precheck',
+      schema: OVERLAP_SCHEMA,
+      agentType: 'general-purpose',
+      model: M_JUDGE,
+    })
+    for (const p of (overlapRes && overlapRes.pairs) || []) {
+      if (!p || !p.slug_a || !p.slug_b) continue
+      const [a, b] = [p.slug_a, p.slug_b].sort()
+      grayBySlug.set(`${a}~${b}`, { slug_a: a, slug_b: b, score: p.score, reason: p.reason, recommendation: p.recommendation })
+    }
+  }
+  // Combine: pairs the deterministic scorer put ABOVE the gray band are trusted as
+  // real near-duplicates (no LLM needed); gray-band pairs take the Sonnet verdict;
+  // pairs below 60 are dropped. Result matches the old all-LLM output shape.
+  for (const p of detPairs) {
+    if (p.score > GRAY_HI) {
+      overlapWarnings.push({ slug_a: p.slug_a, slug_b: p.slug_b, score: p.score,
+        reason: 'high structural overlap (title/headings/essential elements) — deterministic',
+        recommendation: p.score >= 88 ? 'merge' : 'rescope' })
+    } else if (p.score >= GRAY_LO) {
+      const v = grayBySlug.get(`${p.slug_a}~${p.slug_b}`)
+      if (v && v.score >= 60) overlapWarnings.push(v)
+    }
+  }
+  overlapWarnings.sort((a, b) => b.score - a.score)
   const hard = overlapWarnings.filter((p) => p.score >= 75)
   if (hard.length) {
     log(`OVERLAP PRECHECK: ${hard.length} pair(s) >=75 — RESOLVE these (merge/rescope) BEFORE generating; ` +
@@ -387,6 +470,7 @@ if (briefs.length >= 2) {
         soft.map((p) => `${p.slug_a}~${p.slug_b}(${p.score})`).join(', '))
   }
   if (!overlapWarnings.length) log('overlap precheck: no near-duplicate brief pairs — clear to generate')
+  log(`overlap precheck: deterministic scorer + ${grayReviewed} gray-band pair(s) sent to Sonnet`)
 } else {
   log('overlap precheck skipped (fewer than 2 briefs to compare)')
 }

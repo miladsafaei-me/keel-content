@@ -75,7 +75,7 @@ host (SignalBots' current layout) so an existing host adopts with little config:
 
 ## Status
 
-v0.1.4 — extracted, neutralized, and consumed by SignalBots (its first host) through
+v0.1.5 — extracted, neutralized, and consumed by SignalBots (its first host) through
 its `content_pipeline.keel_adapter` host adapter: the intake routes, the generator, the
 figures/hero/external-links stages, and glossary authoring are all in use. The package
 ships no concrete adapter of its own — a host provides one and points
@@ -88,7 +88,15 @@ voice/seams after the intent gate and rewrites once on fail), the **intent gate 
 before the relevance gate** (so links + visuals are judged against the final body), a
 brief-stage **glossary_targets** selection and directed **link_plan** (designed internal
 links), a **brief overlap precheck**, and a **shared visual-reconciliation** contract on
-every body-revising stage. Follow-up (not schema-blocking): the default `agent-author-brief`
-and `cluster-internal-links` prompts still describe the pre-v0.1.4 linking flow; a host
-using the defaults gets a working pipeline but not the fully-designed glossary/link
-behavior until those two default prompts are aligned.
+every body-revising stage. **v0.1.5** adds **per-stage model tiering** (every `agent()`
+sets `model:` explicitly — Opus for substance authoring + the prose-quality editorial
+gate, Sonnet for all judgement/verification/spec-driven visual stages, Haiku for the
+script-runner) plus **deterministic overlap scoring** (`tools/overlap_score.py` computes
+the Layer-4 pairwise audit with zero LLM tokens; only gray-band pairs get a Sonnet
+confirm pass; the brief overlap precheck is likewise plain-JS with Sonnet only on the
+gray band). `overlap_score.py` is invoked from the host repoRoot like `render_on_server.sh`
+(a host copies it from the package template into its `tools/`). Follow-up (not
+schema-blocking): the default `agent-author-brief` and `cluster-internal-links` prompts
+still describe the pre-v0.1.4 linking flow; a host using the defaults gets a working
+pipeline but not the fully-designed glossary/link behavior until those two default
+prompts are aligned.

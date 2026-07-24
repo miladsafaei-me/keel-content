@@ -12,4 +12,4 @@ The pipeline is deliberately business-blind: it produces a *draft*; monetization
 (affiliate wiring, product showcase, asides) is the host's render-layer concern.
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
