@@ -3,8 +3,8 @@ planning worklist into the ContentPlan roadmap.
 
 The unifying step: every planning path's worklist — competitor top-pages
 (``parse_top_pages.py``), keyword clustering (``parse_clusters.py``), or an ideation
-JSON — is upserted into ``blog.ContentPlan`` keyed by slug via the shared
-:func:`~keel_content.adapters.signalbots.upsert_content_plan_spec`. Facet NAMES
+JSON — is upserted into the host ContentPlan queue keyed by slug via the host
+adapter's ``upsert_content_plan_spec`` (resolved through ``get_adapter()``). Facet NAMES
 resolve to live DB rows; rows land in ``planned`` status (the queue head).
 
 Upsert policy protects work: a slug already in production

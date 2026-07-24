@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 
+from ..config import market_link_rule, risk_warning_url
 from .components_embed import apply_components
 from .text_normalize import normalize_body_markdown
 
@@ -49,9 +50,6 @@ _FORMULA_RES = [
     re.compile(r"\byou searched for\b[^.]{0,80}\bbut\b", re.I),
     re.compile(r"\bwhen a human\b[^.]{0,40}\b(picks|chooses|searches for)\b[^.]{0,20}\bbroker\b", re.I),
 ]
-
-# Market surfaces that a forex / cross-market (CFD-automation) post must never link.
-_OFF_MARKET_LINK_RE = re.compile(r"/(?:crypto|binary)(?:/|\b)")
 
 _RISK_TRIGGER_RE = re.compile(
     r"\b(signal|backtest|performance|returns?|win[- ]?rate|leverage|profit|drawdown)\b", re.I
@@ -105,19 +103,31 @@ def check_bundle(b: dict) -> dict:
             fails.append(f"R4 fabricated numeric rating '{m.group(0).strip()}' ({where})")
             break
 
-    # R5 — risk-warning link on any signals/performance/leverage post. The link
-    # often comes from a risk_warning_callout component, so check the RENDERED
-    # output, not just the raw body.
-    if _RISK_TRIGGER_RE.search(body) and "/risk-warning" not in body and "/risk-warning" not in rendered:
-        fails.append("R5 signals/performance content with no /risk-warning link")
+    # R5 — risk-warning link on any risk-bearing post, when the host defines a
+    # risk-warning URL (a non-trading host sets none, disabling this rule). The link
+    # often comes from a risk_warning_callout component, so check the RENDERED output,
+    # not just the raw body.
+    risk_url = risk_warning_url()
+    if risk_url and _RISK_TRIGGER_RE.search(body) and risk_url not in body and risk_url not in rendered:
+        fails.append(f"R5 signals/performance content with no {risk_url} link")
 
-    # R6 — same-market internal links only.
-    forex_side = (not markets) or any(m in ("forex", "cross-market", "stocks") for m in markets)
-    if forex_side and "crypto" not in markets and "binary" not in markets:
-        for link in _INTERNAL_LINK_RE.findall(body):
-            if _OFF_MARKET_LINK_RE.search(link):
-                fails.append(f"R6 off-market internal link on a forex/CFD post: {link}")
-                break
+    # R6 — same-market internal links only, when the host defines a market-integrity
+    # rule (unset disables it — the package carries no market vocabulary of its own).
+    # Fires on a post that is on the "same side" and does not itself cover an off-market,
+    # if it links a surface matching the off-market URL pattern.
+    rule = market_link_rule()
+    if rule:
+        same_side = {str(m).lower() for m in rule.get("same_side_markets", [])}
+        off_markets = {str(m).lower() for m in rule.get("off_market_markets", [])}
+        off_re = rule.get("off_market_url_re")
+        on_same_side = (not markets) or any(m in same_side for m in markets)
+        covers_off = any(m in off_markets for m in markets)
+        if off_re and on_same_side and not covers_off:
+            off_market_re = re.compile(off_re)
+            for link in _INTERNAL_LINK_RE.findall(body):
+                if off_market_re.search(link):
+                    fails.append(f"R6 off-market internal link on a same-market post: {link}")
+                    break
 
     # R7 — roundup sources (soft).
     is_roundup = role == "pillar" or bool(

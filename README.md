@@ -31,7 +31,8 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
    on `keel-ui` for the in-body component catalog.
 2. Add `keel_content` to `INSTALLED_APPS`.
 3. Provide a **publisher adapter** implementing `keel_content.core.publisher.ContentPublisher`
-   (the only sanctioned seam that touches your CMS models) and wire it in.
+   (the only sanctioned seam that touches your CMS models) and point
+   `KEEL_CONTENT["adapter"]` at it — the package ships no default adapter.
 4. Provide your own `content-pipeline/` directory (copy `content-pipeline-template/` and
    fill it): `config.json`, your `prompts/` overrides, and your `EXTERNAL-DOMAINS` list.
    Point `CONTENT_PIPELINE_ROOT` at it (or place it next to `backend/`).
@@ -56,8 +57,9 @@ host (SignalBots' current layout) so an existing host adopts with little config:
   `KEEL_CONTENT_POST_MODEL` (default `blog.ContentPlan` / `blog.Post`) let a keel-cms host
   point the Twitter FKs at `keel_cms.*`.
 - **The `ContentPublisher` adapter** — the one place your CMS models are touched. The
-  package ships SignalBots' `adapters/signalbots.py` as a **reference implementation** to
-  copy, not to use verbatim.
+  package ships **no** concrete adapter (that would couple it to one host's models):
+  set `KEEL_CONTENT["adapter"]` to your module. SignalBots' adapter, at
+  `content_pipeline/keel_adapter.py` in its repo, is the reference implementation to copy.
 - **The prompt set** — `prompts_default/` is a generic starting point; a host ships its
   own voice/rules in `content-pipeline/prompts/`.
 - **AiSetting-shaped config** — the Anthropic + Gemini keys resolve from the host's
@@ -73,6 +75,8 @@ host (SignalBots' current layout) so an existing host adopts with little config:
 
 ## Status
 
-v0.1.0 — engine + intake + generator + glossary authoring extracted, neutralized, and
-self-validated by compile + inspection. Live wiring into a host (adapter, model targets,
-one end-to-end pipeline run) is the host's WIRE step.
+v0.1.2 — extracted, neutralized, and consumed by SignalBots (its first host) through
+its `content_pipeline.keel_adapter` host adapter: the intake routes, the generator, the
+figures/hero/external-links stages, and glossary authoring are all in use. The package
+ships no concrete adapter of its own — a host provides one and points
+`KEEL_CONTENT["adapter"]` at it.

@@ -70,3 +70,25 @@ def brand(token: str, default=None):
 def external_domains() -> list:
     """Host-supplied extra fast-lane domains for the further-reading gate (or [])."""
     return list(content_setting("external_domains", []) or [])
+
+
+def risk_warning_url(default=None):
+    """The host's risk-warning URL for the quality-gate R5 check.
+
+    Returns ``None`` by default so a non-trading host carries no risk-warning rule; a
+    trading host sets ``KEEL_CONTENT["risk_warning_url"]`` (e.g. ``"/risk-warning"``) to
+    require the link on risk-bearing posts.
+    """
+    return content_setting("risk_warning_url", default)
+
+
+def market_link_rule() -> dict | None:
+    """The host's market-integrity link rule for the quality-gate R6 check, or ``None``.
+
+    When set, its shape is ``{"same_side_markets": [str, ...], "off_market_url_re":
+    <regex string>}``: a post whose markets are all on the "same side" must not link a
+    surface matching the off-market pattern. Unset (the default) disables R6 — a host
+    with no cross-market integrity concept carries none of this trading vocabulary.
+    """
+    rule = content_setting("market_link_rule")
+    return rule if isinstance(rule, dict) else None
