@@ -57,6 +57,25 @@ def _next_migration_number() -> int:
     return (max(nums) + 1) if nums else 1
 
 
+def _latest_pkg_migration(app_label: str) -> str:
+    """Latest migration name of an installed-package app (keel_cms / keel_seo).
+
+    The generated glossary migration lives in the host's ``blog/migrations`` but
+    upserts models the Keel move relocated out of the host apps — Tag now lives in
+    keel-cms, Landing in keel-seo — so it must declare a dependency on those apps'
+    current state (otherwise ``apps.get_model`` for them raises at ``migrate`` time).
+    Scans the installed package's ``migrations`` package rather than a host path.
+    """
+    import pkgutil
+    from importlib import import_module
+    try:
+        mod = import_module(f"{app_label}.migrations")
+    except Exception:  # noqa: BLE001 — app not installed; fall back to initial
+        return "0001_initial"
+    names = sorted(n for _, n, _ in pkgutil.iter_modules(mod.__path__) if n[:4].isdigit())
+    return names[-1] if names else "0001_initial"
+
+
 class Command(BaseCommand):
     help = "Persist staged glossary terms (gate: pass verdict required) into JSON + migrations."
 
@@ -160,10 +179,12 @@ class Command(BaseCommand):
         vis_mig = f"{n1 + 1:04d}_load_{opts['batch_name']}_visuals.py"
         prev = self._latest_migration_name(exclude={terms_mig, vis_mig})
 
+        km = _latest_pkg_migration("keel_cms")
+        ks = _latest_pkg_migration("keel_seo")
         (_migrations_dir() / terms_mig).write_text(
-            _render_terms_migration(new_ids, prev), encoding="utf-8")
+            _render_terms_migration(new_ids, prev, km, ks), encoding="utf-8")
         (_migrations_dir() / vis_mig).write_text(
-            _render_visuals_migration(batch_visuals, terms_mig[:-3]), encoding="utf-8")
+            _render_visuals_migration(batch_visuals, terms_mig[:-3], km), encoding="utf-8")
 
         for slug in staged:
             glossary_backlog.remove(staged[slug]["record"]["term"])
@@ -190,16 +211,19 @@ def _slug(term: str) -> str:
     return slugify(term)
 
 
-def _render_terms_migration(new_ids: list[int], prev_migration: str) -> str:
+def _render_terms_migration(
+    new_ids: list[int], prev_migration: str, keel_cms_migration: str, keel_seo_migration: str
+) -> str:
     lo, hi = min(new_ids), max(new_ids)
     return f'''"""Load authored glossary terms (ids {lo}-{hi}) into blog_tag.
 
 Emitted by ``persist_glossary_terms`` (see docs/glossary/term-pipeline-design.md).
 Mirrors 0041: upserts the new terms from backend/core/data/trading_glossary.json,
-wires related_terms by slug, and registers a core.Landing per URL with
+wires related_terms by slug, and registers a keel_seo.Landing per URL with
 is_indexable=False (default) so each page stays noindex until flipped in
 /admin-os/landings/. Each term's visual passed the vision-judge gate at author
-time; the companion visuals migration loads the specs.
+time; the companion visuals migration loads the specs. Tag/Landing moved to
+keel-cms/keel-seo in the Keel migration, so the models are looked up there.
 """
 
 import json
@@ -231,8 +255,8 @@ def load_terms(apps, schema_editor):
     path = _data_path()
     if not path.is_file():
         return
-    Tag = apps.get_model("blog", "Tag")
-    Landing = apps.get_model("core", "Landing")
+    Tag = apps.get_model("keel_cms", "Tag")
+    Landing = apps.get_model("keel_seo", "Landing")
     data = json.loads(path.read_text(encoding="utf-8"))
     all_terms = data.get("terms", [])
     id_to_slug = {{t["id"]: t["slug"] for t in all_terms if t.get("slug")}}
@@ -295,8 +319,8 @@ def unload_terms(apps, schema_editor):
         slugs = [t["slug"] for t in data.get("terms", []) if t.get("id") in NEW_IDS]
     if not slugs:
         return
-    Tag = apps.get_model("blog", "Tag")
-    Landing = apps.get_model("core", "Landing")
+    Tag = apps.get_model("keel_cms", "Tag")
+    Landing = apps.get_model("keel_seo", "Landing")
     Tag.objects.filter(slug__in=slugs, is_term=True).delete()
     Landing.objects.filter(url__in=[f"/trading-glossary/{{s}}" for s in slugs]).delete()
 
@@ -305,6 +329,8 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("blog", "{prev_migration}"),
+        ("keel_cms", "{keel_cms_migration}"),
+        ("keel_seo", "{keel_seo_migration}"),
     ]
 
     operations = [
@@ -313,7 +339,9 @@ class Migration(migrations.Migration):
 '''
 
 
-def _render_visuals_migration(batch_visuals: dict[str, list], terms_migration: str) -> str:
+def _render_visuals_migration(
+    batch_visuals: dict[str, list], terms_migration: str, keel_cms_migration: str
+) -> str:
     body = pprint.pformat(batch_visuals, width=98, sort_dicts=True)
     return f'''"""Attach the vision-judged visual spec to each authored glossary term.
 
@@ -329,13 +357,13 @@ BATCH_VISUALS = {body}
 
 
 def load_visuals(apps, schema_editor):
-    Tag = apps.get_model("blog", "Tag")
+    Tag = apps.get_model("keel_cms", "Tag")
     for slug, visuals in BATCH_VISUALS.items():
         Tag.objects.filter(slug=slug, is_term=True).update(visuals=visuals)
 
 
 def unload_visuals(apps, schema_editor):
-    Tag = apps.get_model("blog", "Tag")
+    Tag = apps.get_model("keel_cms", "Tag")
     Tag.objects.filter(slug__in=list(BATCH_VISUALS)).update(visuals=[])
 
 
@@ -343,6 +371,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("blog", "{terms_migration}"),
+        ("keel_cms", "{keel_cms_migration}"),
     ]
 
     operations = [
