@@ -12,4 +12,12 @@ The pipeline is deliberately business-blind: it produces a *draft*; monetization
 (affiliate wiring, product showcase, asides) is the host's render-layer concern.
 """
 
-__version__ = "0.1.5"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    # Single source of truth: the installed dist version (pyproject [project].version),
+    # so __version__ can never drift from the release tag. See keel-kit
+    # methodology/versioning-and-release.md.
+    __version__ = _pkg_version("keel-content")
+except PackageNotFoundError:  # running from an uninstalled source checkout
+    __version__ = "0.0.0+unknown"
