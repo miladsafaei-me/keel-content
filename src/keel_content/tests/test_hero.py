@@ -97,7 +97,7 @@ class HeroBriefTests(SimpleTestCase):
 
         from django.test import override_settings
 
-        from core.media_urls import featured_image_absolute_url
+        from keel_content.host import featured_image_absolute_url
 
         class _Req:
             def build_absolute_uri(self, u):

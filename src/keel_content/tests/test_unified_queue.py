@@ -13,7 +13,7 @@ from pathlib import Path
 from django.core.management import call_command
 from django.test import TestCase
 
-from blog.models import Category, ContentPlan, Tag, TopicCluster
+from keel_cms.models import Category, ContentPlan, Tag, TopicCluster
 from keel_content.adapters.signalbots import upsert_content_plan_spec
 from keel_content.core import glossary_backlog
 

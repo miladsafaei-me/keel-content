@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.test import SimpleTestCase
 
-from blog.markdown_convert import (
+from keel_cms.markdown_convert import (
     _inject_heading_anchors,
     prepare_pipeline_content_for_storage,
 )

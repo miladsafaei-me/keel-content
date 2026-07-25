@@ -13,7 +13,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase
 
-from blog import markdown_convert
+from keel_cms import markdown_convert
 from keel_ui.renderer import _clamp_to_schema_lengths
 
 

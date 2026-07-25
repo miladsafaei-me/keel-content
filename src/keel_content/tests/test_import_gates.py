@@ -12,7 +12,7 @@ from django.test import TestCase
 
 from keel_content.adapters.signalbots import internal_link_violations
 from keel_content.core.quality_rubric import check_bundle, cross_checks
-from core.models import Landing
+from keel_seo.models import Landing
 
 
 def _bundle(slug: str, body: str, **extra) -> dict:
