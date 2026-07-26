@@ -18,8 +18,12 @@ import functools
 import re
 from pathlib import Path
 
-# backend/content_pipeline/core/hero/fonts.py -> parents[3] == backend/
-DEFAULT_WOFF2 = Path(__file__).resolve().parents[3] / "core/static/fonts/manrope/manrope-latin.woff2"
+# fonts.py lives at keel_content/core/hero/ -> parents[2] == the keel_content package root,
+# which ships fonts/manrope/manrope-latin.woff2 (alongside fonts/montserrat/). Resolve from the
+# PACKAGE, not a host repo layout: the old parents[3]/"core/static/..." assumed the in-repo
+# backend/content_pipeline/ path and broke after the keel migration (it pointed at a nonexistent
+# site-packages/core/static/...). Callers may still pass an explicit woff2_path to override.
+DEFAULT_WOFF2 = Path(__file__).resolve().parents[2] / "fonts/manrope/manrope-latin.woff2"
 
 _SVG_OPEN = re.compile(r"(<svg\b[^>]*>)")
 
