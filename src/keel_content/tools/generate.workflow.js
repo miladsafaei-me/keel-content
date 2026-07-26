@@ -4,9 +4,8 @@ export const meta = {
     'Generate one project blog draft per worklist spec — one fresh agent each, each writing a self-contained bundle JSON for content_import. Then an independent link-relevance gate reviews every draft\'s external sources, and a cluster-linking pass wires blog→blog internal links within each topic cluster once all its articles exist. Independent contexts (no chaining) so every article gets a fresh strategist read.',
   phases: [
     { title: 'Generate', detail: 'one fresh agent per content spec' },
-    { title: 'Intent gate', detail: 'adversarial reviewer checks each draft actually satisfies its search intent + scope; one revision on fail — runs FIRST so the prose is settled before it is polished and before links + visuals are judged against it' },
-    { title: 'Editorial gate', detail: 'independent reader judges how the FINAL article READS (flow, cohesion, voice, seams from the stitched-together assembly); one flow-only revision on fail — runs after the intent gate so it polishes the settled prose' },
-    { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links AGAINST THE FINAL body (after any intent-gate + editorial-gate revision)' },
+    { title: 'Quality gate', detail: 'ONE reviewer scores both intent-satisfaction (coverage/scope) AND editorial quality (flow/cohesion/voice/seams) in a single pass on a recalibrated real-problems-only bar; a single revision fixes coverage gaps + smooths seams together on fail — runs before links + visuals are judged/drawn against the FINAL body' },
+    { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links AGAINST THE FINAL body (after any quality-gate revision)' },
     { title: 'Figures', detail: 'a separate agent draws each article\'s in-article figures (SVG -> WebP) from the author\'s figure_requests after the body is FINAL; a vision judge gates them, one revision on fail' },
     { title: 'Images', detail: 'a separate agent renders the OPTIONAL in-article image-nb2 photoreal images (Gemini scene + SVG text overlay -> WebP) from the author\'s image_requests, within the 2-per-1000-words budget; a vision judge gates them, one revision on fail' },
     { title: 'Hero', detail: 'a separate agent designs each article\'s bespoke featured-image SVG after the body is FINAL (post intent-gate revision)' },
@@ -53,6 +52,11 @@ const editorialGatePath = (A && A.editorialGatePath) || (repoRoot ? `${repoRoot}
 // its research/visual-selection/schema walls, so pointing revises here is the main
 // per-article token cut (see content-pipeline/prompts/brief-revise-card.md).
 const revisePath = (A && A.revisePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/brief-revise-card.md` : '')
+// Merged quality gate: ONE Sonnet judge scores BOTH intent-satisfaction AND editorial
+// quality (replacing the separate intent-gate + editorial-gate stages), on a recalibrated
+// "real problems only" bar; a single Opus revise fixes coverage gaps + smooths seams
+// together; a Sonnet re-judge records the honest verdict. See quality-gate.md.
+const qualityGatePath = (A && A.qualityGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/quality-gate.md` : '')
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
 const figureJudgePath = (A && A.figureJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
@@ -93,12 +97,12 @@ const contents = A.limit ? all.slice(0, A.limit) : all
 // model: EXPLICITLY — never rely on session-model inheritance — so per-article
 // usage cost drops without touching quality. Re-tiering a whole class of stage is
 // a one-line change here.
-//   M_AUTHOR    — substance authoring (irreplaceable generative quality)
-//   M_EDITORIAL — the prose-quality gate + its flow-rewrite (owner-mandated Opus)
-//   M_JUDGE     — verification / judgement / classification / spec-driven visuals
-//   M_MECH      — pure script-runner agents (run a command, return its output)
+//   M_AUTHOR — substance authoring + the merged quality gate's revise (generative quality)
+//   M_JUDGE  — verification / judgement / classification / spec-driven visuals (incl. the
+//              quality-gate JUDGE + re-judge: scoring prose flow is verification, not
+//              authoring, so it runs on Sonnet; only the revise it triggers stays Opus)
+//   M_MECH   — pure script-runner agents (run a command, return its output)
 const M_AUTHOR = 'opus'
-const M_EDITORIAL = 'opus'
 const M_JUDGE = 'sonnet'
 const M_MECH = 'haiku'
 
@@ -411,21 +415,26 @@ const intentFields = (spec) => ({
   // (oversell/undersell) judges the draft against it symmetrically.
   brief_business_bridge: ((spec.brief || {}).business_bridge || null),
 })
-const buildIntentGatePrompt = (spec) =>
+// Merged quality-gate judge: ONE Sonnet reviewer scores BOTH (A) intent satisfaction
+// (coverage/scope/frame/promotion) AND (B) editorial quality (flow/cohesion/voice/seams)
+// in a single pass, on a "real problems only" bar, and patches BOTH an `intent_gate`
+// (content_import blocks on satisfied=false) and an `editorial_gate` (advisory) verdict.
+const buildQualityGatePrompt = (spec) =>
   [
-    'Adversarially judge whether ONE already-generated project blog draft actually',
-    'satisfies its search intent and stayed inside its scope. Default to NOT satisfied.',
+    'Judge ONE already-generated project blog draft on TWO dimensions in a single pass:',
+    '(A) does it satisfy its search intent and stay in scope, and (B) does the finished',
+    'article READ as one coherent piece. Be strict on real coverage/scope gaps and',
+    'reader-felt seams; do NOT nitpick prose that already works (the revise is expensive).',
     '',
-    `1. Read the intent-satisfaction-gate brief IN FULL: ${intentGatePath}`,
+    `1. Read the quality-gate brief IN FULL: ${qualityGatePath}`,
     `2. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   Read ONLY its title/h1/meta_description + body_markdown. Ignore the bundle\'s',
-    '   generation_report and self_flags — that is the author\'s self-assessment and',
-    '   must not anchor your independent verdict.',
-    '3. Judge essential-element coverage, intent-frame fit, and scope discipline per the brief',
-    '   against the ORIGINAL INTENT below.',
-    '4. Patch an "intent_gate" object into the bundle (leave every other field untouched;',
-    `   write it back to the SAME path; slug stays "${spec.slug}").`,
-    '5. Then return the structured verdict.',
+    '   Read ONLY its title/h1/meta_description + body_markdown. Ignore generation_report/self_flags.',
+    '3. Judge Part A (essential-element coverage, intent-frame fit, scope discipline, promotion',
+    '   balance, keyword naturalness) against the ORIGINAL INTENT below, and Part B (flow,',
+    '   cohesion, voice, visual integration, opening/closing, readability) per the brief.',
+    '4. Patch BOTH an "intent_gate" and an "editorial_gate" object into the bundle (leave every',
+    `   other field untouched; write it back to the SAME path; slug stays "${spec.slug}").`,
+    '5. Then return the combined structured verdict.',
     '',
     'ORIGINAL INTENT (the spec):',
     JSON.stringify(intentFields(spec), null, 2),
@@ -435,118 +444,52 @@ const buildIntentGatePrompt = (spec) =>
 // lives in the host revise card (content-pipeline/prompts/brief-revise-card.md), which
 // each revise agent reads — so it is no longer inlined here.
 
-// Single revision pass, run ONLY when the intent gate fails: an author agent reads the
-// verdict and patches the body to cover the missing essential elements and trim any
-// scope violation, then re-validates. Bounded to one attempt — a re-gate records the
-// honest final verdict; a residual failure is surfaced (not silently shipped) at import.
-const buildRevisePrompt = (spec, verdict) =>
+// Single merged revision, run ONLY when the quality gate fails EITHER dimension: one Opus
+// agent adds the missing essential substance / trims scope AND smooths the named reading
+// seams, in one pass, then a re-judge records the honest final verdict. Bounded to one
+// attempt; a residual failure is surfaced (not silently shipped) at import.
+const buildQualityRevisePrompt = (spec, verdict) =>
   [
-    'Revise ONE already-generated project blog draft to fix specific intent gaps.',
+    'Revise ONE already-generated project blog draft to fix the specific problems a quality',
+    'gate flagged — both intent-coverage gaps and reading seams — in a single pass.',
     '',
     `1. Read the revise card IN FULL first: ${revisePath} — it carries every binding rule`,
     '   (it points you to brief-core-constraints.md — read that too), the "do NOT touch',
     '   internal_links/external_sources" rule, and the visual-reconcile step.',
     `2. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it.`,
-    '3. The intent gate FAILED this draft. Fix exactly these, changing as little else as possible:',
+    '3. Fix exactly these, changing as little else as possible:',
     `   - missing essential elements to ADD: ${JSON.stringify((verdict && verdict.missing_essential) || [])}`,
     `   - scope violations to REMOVE/trim to one sentence: ${JSON.stringify((verdict && verdict.scope_violations) || [])}`,
     `   - frame mismatch to correct: ${JSON.stringify((verdict && verdict.frame_mismatch) || '')}`,
+    `   - reading problems to smooth: ${JSON.stringify((verdict && verdict.problems) || [])}`,
+    `   - specific seam locations: ${JSON.stringify((verdict && verdict.seams) || [])}`,
+    '   Add missing substance where a coverage gap needs it; smooth seams by rewriting',
+    '   transitions/sentences, removing repetition, unifying voice. Do NOT reintroduce a',
+    '   scope violation, invent facts/stats, or add/drop sections beyond what a fix needs.',
     '4. Reconcile the visuals with your edit per the card.',
     `5. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
     '6. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
   ].join('\n')
 
-const INTENT_VERDICT_SCHEMA = {
+const COMBINED_VERDICT_SCHEMA = {
   type: 'object',
   additionalProperties: true,
   properties: {
     slug: { type: 'string' },
     satisfied: { type: 'boolean' },
-    missing: { type: 'number' },
-    scope_violations: { type: 'number' },
+    reads_well: { type: 'boolean' },
     missing_essential: { type: 'array', items: { type: 'string' } },
+    scope_violations: { type: 'array', items: { type: 'string' } },
     frame_mismatch: { type: 'string' },
-  },
-  required: ['satisfied'],
-}
-
-// Editorial-quality gate for one already-written bundle: an independent reader that
-// judges ONLY how the FINAL article READS — flow, cohesion, voice consistency, visual
-// integration, intro/closing coherence, readability — the seams a stitched-together
-// pipeline (draft + intent-revision sections + inserted visuals + post-hoc links) can
-// leave. Runs AFTER the intent gate (prose is final) and BEFORE the relevance gate and
-// visuals (so links/figures land on the polished body). It patches an `editorial_gate`
-// verdict into the bundle. Advisory — a residual fail is surfaced, not import-blocked.
-const buildEditorialGatePrompt = (spec) =>
-  [
-    'Judge ONLY how ONE already-generated project blog article READS — its flow and',
-    'cohesion — not whether it satisfies search intent (a separate gate already did that).',
-    'The article was assembled in pieces (a draft, then an intent revision that may have',
-    'added/removed sections, plus visual markers), so hunt for the SEAMS that hurt reading.',
-    '',
-    `1. Read the editorial-quality-gate brief IN FULL: ${editorialGatePath}`,
-    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   Read its title/h1/meta_description + body_markdown. Treat [[FIGURE:<id>]] /',
-    '   [[IMAGE:<id>]] as visual placeholders — judge whether the prose AROUND each one',
-    '   sets it up and pays it off, not the marker text itself.',
-    '3. Score the rubric dimensions in the brief (flow & transitions, cohesion &',
-    '   non-redundancy, voice consistency, visual integration, opening/closing coherence,',
-    '   readability). Flag SPECIFIC seam locations. Only fail for problems a reader would',
-    '   actually feel — do NOT nitpick prose that already reads well.',
-    '4. Patch an "editorial_gate" object into the bundle (leave every other field untouched;',
-    `   write it back to the SAME path; slug stays "${spec.slug}").`,
-    '5. Then return the structured verdict.',
-  ].join('\n')
-
-// Single flow-only revision, run ONLY when the editorial gate fails. It smooths the
-// seams the judge named WITHOUT changing substance — no added/removed facts, no
-// reintroduced scope violations, no new/dropped sections beyond what a transition
-// needs; it rewrites transitions/sentences, removes redundancy, unifies voice, and
-// keeps the visuals reconciled. Bounded to one attempt; a re-judge records the honest
-// final verdict.
-const buildEditorialRevisePrompt = (spec, verdict) =>
-  [
-    'Smooth the READING of ONE already-generated project blog article (editorial follow-up).',
-    'This is a PROSE pass, not a rewrite: preserve every fact, element, section, and the',
-    'structure the intent gate blessed — change only how it reads.',
-    '',
-    `1. Read the revise card IN FULL first: ${revisePath} — it carries every binding rule`,
-    '   (it points you to brief-core-constraints.md — read that too), the "do NOT touch',
-    '   internal_links/external_sources" rule, and the visual-reconcile step.',
-    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it.`,
-    '3. The editorial gate flagged these reading problems — fix exactly these:',
-    `   - problems by dimension: ${JSON.stringify((verdict && verdict.problems) || [])}`,
-    `   - specific seam locations: ${JSON.stringify((verdict && verdict.seams) || [])}`,
-    '   Fix them by rewriting transitions and sentences, adding connective tissue, removing',
-    '   repeated explanations, and unifying voice/tense/person. Do NOT add or remove facts,',
-    '   essential elements, or sections; do NOT reintroduce anything the intent gate removed.',
-    '4. Reconcile the visuals with your edit per the card.',
-    `5. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
-    '6. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
-  ].join('\n')
-
-const EDITORIAL_VERDICT_SCHEMA = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
-    slug: { type: 'string' },
-    reads_well: { type: 'boolean', description: 'true only when the article flows as one coherent piece with no reader-felt seams.' },
-    scores: {
-      type: 'object', additionalProperties: true,
-      properties: {
-        flow: { type: 'integer' },
-        cohesion: { type: 'integer' },
-        voice: { type: 'integer' },
-        visual_integration: { type: 'integer' },
-        opening_closing: { type: 'integer' },
-        readability: { type: 'integer' },
-      },
-    },
     problems: { type: 'array', items: { type: 'string' } },
     seams: { type: 'array', items: { type: 'string' } },
   },
-  required: ['reads_well'],
+  required: ['satisfied', 'reads_well'],
 }
+
+// (The former separate editorial-quality gate + its Opus judge/revise/rejudge are merged
+// into the single quality gate above — one Sonnet judge scores flow/cohesion/voice/seams
+// alongside intent, and the one Opus revise smooths the seams it names.)
 
 // pipeline: each article flows write -> intent-gate (+revision) -> editorial-gate
 // (+revision) -> relevance-gate -> figures -> images -> hero independently (no
@@ -583,70 +526,46 @@ for (let w = 0; w < waves.length; w++) {
         agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
         model: M_AUTHOR,
       }).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
-    // Stage 2 — INTENT GATE FIRST. Any body revision it triggers happens before
-    // the relevance gate, figures, images, and hero, so every later stage sees the
-    // FINAL body. Operates directly on the author bundle (no relevance gate ran yet).
+    // Stage 2 — QUALITY GATE (merged intent + editorial). ONE Sonnet judge scores BOTH
+    // coverage/scope AND flow/cohesion/voice/seams; on a real failure of EITHER dimension,
+    // ONE Opus revise adds the missing substance + smooths the named seams together; ONE
+    // Sonnet re-judge records the honest verdicts. Runs before the relevance gate + visuals
+    // so they see the FINAL body. Patches both an intent_gate (content_import blocks on
+    // satisfied=false) and an editorial_gate (advisory) verdict into the bundle.
     async (authored, spec) => {
-      if (!intentGatePath || !authored || authored.status == null) return { ...authored, intentGate: null }
-      let verdict = await agent(buildIntentGatePrompt(spec), {
-        label: `intent-gate:${spec.slug}`,
-        phase: 'Intent gate',
+      if (!qualityGatePath || !authored || authored.status == null) {
+        return { ...authored, intentGate: null, editorialGate: null }
+      }
+      let verdict = await agent(buildQualityGatePrompt(spec), {
+        label: `quality-gate:${spec.slug}`,
+        phase: 'Quality gate',
         agentType: 'general-purpose',
-        model: M_JUDGE,
-        schema: INTENT_VERDICT_SCHEMA,
+        model: M_JUDGE, // judging both dimensions is verification — Sonnet, not Opus
+        schema: COMBINED_VERDICT_SCHEMA,
       })
       let revised = false
-      if (verdict && verdict.satisfied === false) {
-        await agent(buildRevisePrompt(spec, verdict), {
-          label: `revise:${spec.slug}`,
-          phase: 'Intent gate',
+      if (verdict && (verdict.satisfied === false || verdict.reads_well === false)) {
+        await agent(buildQualityRevisePrompt(spec, verdict), {
+          label: `quality-revise:${spec.slug}`,
+          phase: 'Quality gate',
           agentType: 'general-purpose',
-          model: M_AUTHOR, // re-authors body to add missing substance — stays Opus
+          model: M_AUTHOR, // the substance-add / prose-rewrite stays Opus
         })
         revised = true
-        // Re-gate once to record the honest final verdict in the bundle.
-        verdict = await agent(buildIntentGatePrompt(spec), {
-          label: `re-gate:${spec.slug}`,
-          phase: 'Intent gate',
+        // Re-judge once to record the honest final verdicts in the bundle.
+        verdict = await agent(buildQualityGatePrompt(spec), {
+          label: `quality-rejudge:${spec.slug}`,
+          phase: 'Quality gate',
           agentType: 'general-purpose',
           model: M_JUDGE,
-          schema: INTENT_VERDICT_SCHEMA,
+          schema: COMBINED_VERDICT_SCHEMA,
         })
       }
-      return { ...authored, intentGate: { satisfied: !!(verdict && verdict.satisfied), revised } }
-    },
-    // Stage 3 — EDITORIAL GATE. Judges how the FINAL article READS (flow, cohesion,
-    // voice, seams) after the intent revision settled the prose, and BEFORE the
-    // relevance gate + visuals so links/figures land on the polished body. One
-    // flow-only revision on fail, then a re-judge records the honest verdict.
-    async (intented, spec) => {
-      if (!editorialGatePath || !intented || intented.status == null) return { ...intented, editorialGate: null }
-      let verdict = await agent(buildEditorialGatePrompt(spec), {
-        label: `editorial-gate:${spec.slug}`,
-        phase: 'Editorial gate',
-        agentType: 'general-purpose',
-        model: M_EDITORIAL, // owner-mandated Opus: the prose-quality gate is never downgraded
-        schema: EDITORIAL_VERDICT_SCHEMA,
-      })
-      let revised = false
-      if (verdict && verdict.reads_well === false) {
-        await agent(buildEditorialRevisePrompt(spec, verdict), {
-          label: `editorial-revise:${spec.slug}`,
-          phase: 'Editorial gate',
-          agentType: 'general-purpose',
-          model: M_EDITORIAL, // the flow-rewrite it triggers stays Opus too
-        })
-        revised = true
-        // Re-judge once to record the honest final verdict in the bundle.
-        verdict = await agent(buildEditorialGatePrompt(spec), {
-          label: `editorial-rejudge:${spec.slug}`,
-          phase: 'Editorial gate',
-          agentType: 'general-purpose',
-          model: M_EDITORIAL,
-          schema: EDITORIAL_VERDICT_SCHEMA,
-        })
+      return {
+        ...authored,
+        intentGate: { satisfied: !!(verdict && verdict.satisfied), revised },
+        editorialGate: { reads_well: !!(verdict && verdict.reads_well), revised },
       }
-      return { ...intented, editorialGate: { reads_well: !!(verdict && verdict.reads_well), revised } }
     },
     // Stage 4 — RELEVANCE GATE, now against the FINAL body. The intent-gate and
     // editorial-gate revisions (if any) have already run, so external sources are
