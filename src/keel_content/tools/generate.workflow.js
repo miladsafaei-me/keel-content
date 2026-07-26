@@ -56,6 +56,11 @@ const revisePath = (A && A.revisePath) || (repoRoot ? `${repoRoot}/content-pipel
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
 const figureJudgePath = (A && A.figureJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
+// The figure VISION-JUDGE (and its rejudge) only VIEW the rendered figure and check it —
+// they don't draw, so they read this compact pass/fail card instead of the full
+// figure-style-guide.md drawing recipe (the figure author + figure-revise still read the
+// full guide, since they draw SVG). Same per-stage-composition cut as the revise card.
+const figureJudgeCardPath = (A && A.figureJudgeCardPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge-card.md` : '')
 // Renders (figure_raster / nb2_image) run ON THE SERVER via this wrapper: it
 // stages the bundle dir up, renders inside an isolated memory-capped container,
 // and copies the rendered files back — so the box driving generation needs no
@@ -227,7 +232,7 @@ const buildFigureJudgePrompt = (spec) =>
     'Vision-judge the in-article figures of ONE project blog article. Default to rejecting.',
     '',
     `1. Read the judge brief IN FULL: ${figureJudgePath}`,
-    `2. Read the figure style guide IN FULL: ${figureStylePath}`,
+    `2. Read the figure judge card IN FULL: ${figureJudgeCardPath} (the compact pass/fail bar — you view + judge, you do not draw).`,
     `3. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
     '   View each figure\'s rendered .png (sibling of its .webp) with the Read tool.',
     '4. Patch the "figure_gate" verdict into the bundle (leave every other field',

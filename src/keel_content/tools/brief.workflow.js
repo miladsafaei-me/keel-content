@@ -32,6 +32,11 @@ const M_JUDGE = 'sonnet'
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const contents = Array.isArray(A.contents) ? A.contents : []
 const briefPath = A.briefPath || ''
+// The brief-REVISE pass fixes an already-written brief (it has the prior brief + the
+// judge's flagged fixes in hand), so it reads this lean revise card instead of the full
+// brief-writer contract — same per-stage-composition cut as the generate revise card.
+// Derived from briefPath so no caller change is needed.
+const reviseBriefPath = A.reviseBriefPath || briefPath.replace(/brief-author\.md$/, 'brief-revise-writer.md')
 const clusterPath = A.clusterPath || ''
 const judgePath = A.judgePath || ''
 const waveSize = Math.max(1, A.waveSize || 4)
@@ -225,7 +230,9 @@ for (const [key, specs] of bySlug) {
 
 // ---- Phase 2 + 3: per-article brief, then adversarial judge (one revision) -----
 const buildPrompt = (spec, judgeFeedback) => [
-  `Read the brief-writer contract at ${briefPath} and follow it exactly.`,
+  judgeFeedback
+    ? `Read the brief-revise card at ${reviseBriefPath} — you are fixing an already-written brief, not writing one from scratch, so this compact card is all you need.`
+    : `Read the brief-writer contract at ${briefPath} and follow it exactly.`,
   '',
   'Write the production brief for this ONE planned article. The spec carries the',
   'stored evidence URLs (competitor_urls) — CRAWL those (WebFetch 3-6); WebSearch',
