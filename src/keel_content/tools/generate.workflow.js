@@ -46,6 +46,13 @@ const gatePath = (A && A.gatePath) || (repoRoot ? `${repoRoot}/content-pipeline/
 const heroPath = (A && A.heroPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-hero.md` : '')
 const intentGatePath = (A && A.intentGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/intent-satisfaction-gate.md` : '')
 const editorialGatePath = (A && A.editorialGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/editorial-quality-gate.md` : '')
+// The body-revising stages (intent-revise + editorial-revise) read this LEAN card
+// instead of the full author brief — it carries only the binding hard rules
+// (via brief-core-constraints.md) + the visual-reconcile step a revise needs. The
+// full brief is the WRITE stage's system prompt; a surgical revise does not need
+// its research/visual-selection/schema walls, so pointing revises here is the main
+// per-article token cut (see content-pipeline/prompts/brief-revise-card.md).
+const revisePath = (A && A.revisePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/brief-revise-card.md` : '')
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
 const figureJudgePath = (A && A.figureJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
@@ -419,26 +426,9 @@ const buildIntentGatePrompt = (spec) =>
     JSON.stringify(intentFields(spec), null, 2),
   ].join('\n')
 
-// Shared visual-reconciliation contract for EVERY stage that rewrites the body
-// (intent-revise + editorial-revise). A body edit can strand a visual: a
-// figure_request pointing at deleted content, a new section illustrated nowhere
-// while its neighbours carry visuals, or a marker with no matching entry. Figures
-// are drawn and cp-components rendered downstream from these contracts, so a body
-// rewrite that leaves them stale ships a wrong or missing visual. Defined once so
-// both revise prompts enforce it identically.
-const VISUAL_RECONCILE_STEPS =
-  'RECONCILE the visuals with the body you just changed:\n' +
-  '   - figure_requests: every [[FIGURE:<id>]] marker must have exactly one figure_requests\n' +
-  '     entry and vice-versa, and >=1 must remain. If you ADDED a section that earns a drawn\n' +
-  '     figure, add a matching entry + marker; if you REMOVED/rewrote what a figure pointed\n' +
-  '     at, drop or repoint that entry + marker. Leave already-valid figure_requests untouched.\n' +
-  '   - cp-component visuals: if you ADDED a section carrying a data structure a catalog\n' +
-  '     component would illustrate (comparison, flow, steps, distribution), embed the fitting\n' +
-  '     cp-component block inline so the new section is not prose-only while the rest of the\n' +
-  '     article is illustrated; if you REMOVED a section, remove its now-orphaned component.\n' +
-  '     Never add a component where the section does not earn one (no one-of-each quota).\n' +
-  '   - image_requests / [[IMAGE:<id>]] markers: keep them paired the same way; drop any whose\n' +
-  '     paragraph you deleted.'
+// The visual-reconciliation contract that both body-revising stages must honor now
+// lives in the host revise card (content-pipeline/prompts/brief-revise-card.md), which
+// each revise agent reads — so it is no longer inlined here.
 
 // Single revision pass, run ONLY when the intent gate fails: an author agent reads the
 // verdict and patches the body to cover the missing essential elements and trim any
@@ -448,18 +438,17 @@ const buildRevisePrompt = (spec, verdict) =>
   [
     'Revise ONE already-generated project blog draft to fix specific intent gaps.',
     '',
-    `1. Read the author brief IN FULL first: ${briefPath} (all rules still apply).`,
+    `1. Read the revise card IN FULL first: ${revisePath} — it carries every binding rule`,
+    '   (it points you to brief-core-constraints.md — read that too), the "do NOT touch',
+    '   internal_links/external_sources" rule, and the visual-reconcile step.',
     `2. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it.`,
     '3. The intent gate FAILED this draft. Fix exactly these, changing as little else as possible:',
     `   - missing essential elements to ADD: ${JSON.stringify((verdict && verdict.missing_essential) || [])}`,
     `   - scope violations to REMOVE/trim to one sentence: ${JSON.stringify((verdict && verdict.scope_violations) || [])}`,
     `   - frame mismatch to correct: ${JSON.stringify((verdict && verdict.frame_mismatch) || '')}`,
-    '4. Keep every mechanical rule (cp-component data specs valid, no inline style=, 2-4',
-    '   takeaways, meta/title/h1 lengths, INDEXABLE_URLS-only internal links, no /blog links).',
-    '   Do NOT touch the "internal_links" or "external_sources" fields.',
-    `5. ${VISUAL_RECONCILE_STEPS}`,
-    `6. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
-    '7. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
+    '4. Reconcile the visuals with your edit per the card.',
+    `5. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
+    '6. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
   ].join('\n')
 
 const INTENT_VERDICT_SCHEMA = {
@@ -516,20 +505,19 @@ const buildEditorialRevisePrompt = (spec, verdict) =>
     'This is a PROSE pass, not a rewrite: preserve every fact, element, section, and the',
     'structure the intent gate blessed — change only how it reads.',
     '',
-    `1. Read the author brief IN FULL first: ${briefPath} (all rules still apply).`,
+    `1. Read the revise card IN FULL first: ${revisePath} — it carries every binding rule`,
+    '   (it points you to brief-core-constraints.md — read that too), the "do NOT touch',
+    '   internal_links/external_sources" rule, and the visual-reconcile step.',
     `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it.`,
     '3. The editorial gate flagged these reading problems — fix exactly these:',
     `   - problems by dimension: ${JSON.stringify((verdict && verdict.problems) || [])}`,
     `   - specific seam locations: ${JSON.stringify((verdict && verdict.seams) || [])}`,
     '   Fix them by rewriting transitions and sentences, adding connective tissue, removing',
     '   repeated explanations, and unifying voice/tense/person. Do NOT add or remove facts,',
-    '   essential elements, or sections; do NOT reintroduce anything the intent gate removed;',
-    '   do NOT touch the "internal_links" or "external_sources" fields.',
-    '4. Keep every mechanical rule (cp-component specs valid, no inline style=, 2-4 takeaways,',
-    '   meta/title/h1 lengths, INDEXABLE_URLS-only internal links, no /blog links).',
-    `5. ${VISUAL_RECONCILE_STEPS}`,
-    `6. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
-    '7. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
+    '   essential elements, or sections; do NOT reintroduce anything the intent gate removed.',
+    '4. Reconcile the visuals with your edit per the card.',
+    `5. Write the bundle back to the SAME path; slug stays "${spec.slug}".`,
+    '6. Return ONLY a compact one-line JSON status: {"slug":"...","revised":true,"addressed":N}.',
   ].join('\n')
 
 const EDITORIAL_VERDICT_SCHEMA = {
