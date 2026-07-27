@@ -31,9 +31,16 @@ A fluent draft that answers only half the intent must fail A.
    who searched this query consider their task incomplete without it?). When
    `brief_essential_elements` is non-empty, include each (a visible `[[ASSET:...]]` placeholder
    counts as delivered-pending-asset). Any **missing** essential element → `satisfied: false`.
-2. **Intent-frame fit.** Does the shape match the archetype? (`compare`/`vs` actually compares;
-   `how-to` gives followable steps; `what-is` leads with a crisp concrete answer.) A serious
-   mismatch → not satisfied (name it in `frame_mismatch`).
+   **Intent-owed visuals count here (under-service is a real gap, judged conservatively):** when
+   the `intent_frame` genuinely owes a specific visual for the reader to finish their task (a real
+   comparison/decision visual on a `compare`/`vs`/`best` page, an annotated chart + scenario on a
+   forecast, the chart a distribution/attrition claim needs), its ABSENCE — or replacement by a
+   bare generic stand-in that doesn't do the job — is a missing/partial essential element. Never
+   invent a visual the intent didn't ask for; flag only one the reader genuinely needs.
+2. **Intent-frame fit.** Does the shape match the archetype? (`compare`/`vs` actually compares —
+   with a real comparison/decision visual, not just prose or a bare table; `how-to` gives
+   followable steps; `what-is` leads with a crisp concrete answer.) A serious mismatch → not
+   satisfied (name it in `frame_mismatch`).
 3. **Scope discipline.** Does the body teach or build a section on anything in `scope_excludes`,
    or re-teach near-verbatim an explanation `canonical_owner` assigns to a sibling? One sentence
    of context is allowed; a section is a violation → not satisfied.
@@ -61,11 +68,19 @@ dropped-in visual markers, links wired later). Score each 1–5, then decide:
 1. **Flow & transitions** — each section leads naturally into the next; watch for a section that
    reads bolted on.
 2. **Cohesion & non-redundancy** — each idea developed once; flag a concept re-explained by two
-   passes, and contradictions.
+   passes, and contradictions. **Includes visual redundancy:** the SAME idea rendered through two
+   or more components in a row (a step-procedure then the same steps as a checklist; a number in a
+   costbar then the same number in a calculator) is furniture — flag it and say which to keep.
 3. **Voice consistency** — second person, the project's niche angle, one tense and formality;
    flag drift into neutral-encyclopedia voice.
-4. **Visual integration** — for each `[[FIGURE]]`/`[[IMAGE]]`, the prose around it sets it up and
-   pays it off; a marker with no textual anchor fails.
+4. **Visual integration & fit — every component must earn its place (both directions).** For each
+   component / `[[FIGURE]]` / `[[IMAGE]]`: the prose around it sets it up and pays it off (a marker
+   with no textual anchor fails), AND it does a job prose and the adjacent visuals don't already
+   do. Flag as furniture: a component that only restates prose; a decision tree with no real
+   branch; an engagement widget (quiz, light versus) in a high-value slot; a generic component
+   standing in for the specific one the section needs. This is NOT a bias toward fewer visuals — a
+   section that needs a visual and lacks it is just as much a fail (raise it under Part A). Judge
+   fit, not count.
 5. **Opening & closing coherence** — the intro frames what the body actually delivers; the
    conclusion resolves rather than trailing off.
 6. **Readability** — sentence variety, no wall-of-text, no padding, not choppy.

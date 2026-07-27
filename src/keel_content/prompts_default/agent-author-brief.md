@@ -174,8 +174,11 @@ the article body into your final message.
 
 - Answers *the spec's intent* more completely than the on-intent competitors. Every essential
   element delivered; zero distracting padding.
-- Visual set derived from intent (no slot-filler, no one-of-each); each a schema-valid
-  component block; **≥1 `figure_requests`** with a real `comprehension_job` and a marker.
+- Visual set derived from intent (no slot-filler, no one-of-each) AND complete — every concept
+  the intent_frame owes a specific visual is delivered, not substituted by generic furniture;
+  each visual a schema-valid component block; **at least one standalone explanatory image ships —
+  an NB2 image OR a `figure_requests`** with a real `comprehension_job` and a marker (figures are
+  not required when an NB2 image covers the floor).
 - Compliance + language honored; **no third-party statistics anywhere**; nothing inline in the
   body. **Every internal link is in `INDEXABLE_URLS`, no trailing slash, one per target.**
 - `h1` set from the spec's `h1`; `key_takeaways_markdown` has **2–4** bullets;

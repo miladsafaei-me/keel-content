@@ -71,8 +71,10 @@ It MUST match this shape (the publisher reads it via `content_import`):
 - **Do NOT author the `hero` field** — a separate stage designs the featured-image SVG after
   your draft exists (`author-hero.md`). Omit `hero` entirely.
 - **Do NOT author the `figures` field** — you emit only `figure_requests` + their markers; a
-  separate stage draws, rasterizes, and judge-gates them. **At least one `figure_requests`
-  entry is required** — a bundle with none is import-blocked.
+  separate stage draws, rasterizes, and judge-gates them. **The one-standalone-image floor is
+  satisfied by an NB2 image OR a figure** — a `figure_requests` entry is required ONLY when the
+  article carries no NB2 image and the concept is genuinely diagram-only. Do not emit a figure
+  purely to clear the floor when an NB2 image already covers it.
 
 **Then return — as your final message (the orchestrator reads this, not the article) — a
 compact one-line JSON status only:**

@@ -69,4 +69,8 @@ The deterministic import gates catch these — write to them once, don't write d
   component's `manifest.json`; the publisher truncates an over-long value and **flags the
   truncation as a defect** (rubric R2). Use the exact schema field **names** and the exact
   `component_id` in **underscored** form (never the hyphenated folder name).
-- **At least one `figure_requests` entry is required** — a bundle with none is import-blocked.
+- **Every article ships at least one standalone explanatory image — and that image may be an
+  NB2 photoreal image OR a drawn `figure_requests`, whichever the content genuinely needs.** The
+  import gate is satisfied by *either*; a drawn figure is NOT unconditionally required. Reach for
+  a figure only when the concept is inherently *drawn* and no NB2 scene expresses it — never to
+  satisfy a figure-specific quota.

@@ -15,6 +15,15 @@ image). You never write HTML/CSS/JS — visuals are data specs the server render
   visual ask: "does the concept demand this format, or am I filling a slot?" — cut every
   slot-filler. "One table + one flowchart + one chart + one calculator" on every article is
   the templated sameness search engines read as low-effort.
+- **The test is USEFULNESS, in BOTH directions — never a bias toward "fewer visuals."** The goal
+  is the *right* set for this reader, not the smallest set. Two failures are equally bad: (a)
+  over-furnishing — a component that only restates prose or another component, an interactive that
+  computes nothing the reader cares about, a decision tree with no real branch, an engagement quiz
+  in a high-value slot; and (b) under-serving — the specific visual this intent owes is missing or
+  replaced by a generic stand-in (a "best-X" page with a bare table instead of a real
+  comparison/rating visual, a forecast with no annotated chart). When the concept truly needs a
+  visual, deliver the *specific* one that nails it — never skip it to keep the count down, and
+  never downgrade it to easier, always-applicable furniture.
 - **`lead_visual_archetype` hint:** honor it as your LEAD / most-prominent visual, then
   derive the rest from intent (it is a cluster-level variety nudge). If it can't serve this
   article, pick the closest fitting lead and note why in `generation_report.self_flags`.
@@ -50,8 +59,11 @@ image). You never write HTML/CSS/JS — visuals are data specs the server render
   ```
   `caption` (≤ ~200 chars) and `eyebrow` are optional. A block whose spec fails validation is
   **dropped** — get the schema exactly right.
-- **Put at least one INTERACTIVE visual in a long article** (a reader-manipulated component —
-  a calculator, simulator, checklist, or quiz). Everything else is static.
+- **Make it interactive when — and only when — the reader should compute, experiment, or
+  self-test** (a calculator, simulator, checklist, or quiz for a section that hands the reader
+  numbers to plug in, an edge to explore, or a misconception to check). Do NOT add an interactive
+  just to have one — an interactive that computes nothing the reader cares about is furniture. No
+  per-article interactive quota; fit decides. Everything else is static.
 - **Prose-bearing `structure` blocks** carry the article's own prose and frame a *key
   moment* (schema-validated): an opening answer hero, a beat section, an element card, a
   closing loop. Use sparingly, only when a moment deserves a designed frame.
