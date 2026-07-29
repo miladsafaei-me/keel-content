@@ -54,8 +54,12 @@ ssh "$HOST" "mkdir -p ~/.cache && podman exec $WEB_CONTAINER env \
   | grep -E '^(POSTGRES_|DJANGO_SECRET_KEY|REDIS_URL|CELERY_)' > $RENDER_ENV \
   && chmod 600 $RENDER_ENV"
 
-# 1) stage the bundle dir up
-ssh "$HOST" "mkdir -p ~/$REMOTE_DIR"
+# 1) stage the bundle dir up. The remote dir is keyed only on the local dir's
+#    basename, so a later batch reusing that name would inherit whatever the
+#    previous batch left behind — and step 3 copies the WHOLE dir back down,
+#    re-injecting those stale artifacts into the live batch. Wipe before staging
+#    so the remote side is always an exact mirror of this batch.
+ssh "$HOST" "rm -rf ~/$REMOTE_DIR && mkdir -p ~/$REMOTE_DIR"
 scp -q -r "$LOCAL_DIR/." "$HOST:~/$REMOTE_DIR/"
 
 # 2) render inside an isolated, memory-capped, throwaway container on the DB
