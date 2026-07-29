@@ -21,6 +21,12 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   the only models this package owns) and a glossary-term queue.
 - **The generator + parsers** (`keel_content.tools`): the JS generation/brief/reconcile
   workflows and the worklist parsers.
+- **The standalone images pass** (`images.workflow.js` + `export_pending_visuals` /
+  `apply_post_images`): the bespoke hero and the in-article NB2 photoreal images are
+  produced AFTER `content_import`, not inside the generation run — they cost ~123
+  minutes of per-article chain for output no other stage consumes. A freshly imported
+  post lands `images_ready=False` and is **not publishable** until the pass flips it.
+  See [`IMAGES-PASS.md`](IMAGES-PASS.md).
 - **The glossary-term authoring pipeline** (author → validate → screenshot → vision-judge
   → persist), gated on a recorded pass verdict.
 - **A default prompt set** (`keel_content/prompts_default/`) a host overrides per project.

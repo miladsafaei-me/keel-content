@@ -228,10 +228,19 @@ class Command(BaseCommand):
             # coherent ones); the >=1 floor applies to blog bundles and has its own
             # escape hatch for legacy/edge imports.
             violations += figure_violations(bundle, bundle_dir=f.parent)
+            # A REQUESTED NB2 image counts toward the floor even before it is drawn:
+            # NB2 production moved out of the generation run, so at import the normal
+            # shape is "requests + anchors, no files yet". The post lands
+            # images_ready=False and the standalone images pass fills them in — the
+            # visual is planned and positioned, just not rendered.
+            pending_image_requests = [
+                r for r in (bundle.get("image_requests") or []) if isinstance(r, dict)
+            ]
             if (
                 bundle.get("target", "blog") == "blog"
                 and not normalize_figures(bundle.get("figures"))
                 and not normalize_images(bundle.get("images"))
+                and not pending_image_requests
                 and not allow_no_figures
             ):
                 violations.append(

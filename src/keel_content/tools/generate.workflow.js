@@ -6,9 +6,7 @@ export const meta = {
     { title: 'Generate', detail: 'one fresh agent per content spec' },
     { title: 'Quality gate', detail: 'ONE reviewer scores both intent-satisfaction (coverage/scope) AND editorial quality (flow/cohesion/voice/seams) in a single pass on a recalibrated real-problems-only bar; a single revision fixes coverage gaps + smooths seams together on fail — runs before links + visuals are judged/drawn against the FINAL body' },
     { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links AGAINST THE FINAL body (after any quality-gate revision)' },
-    { title: 'Figures', detail: 'a separate agent draws each article\'s in-article figures (SVG -> WebP) from the author\'s figure_requests after the body is FINAL; a vision judge gates them, one revision on fail' },
-    { title: 'Images', detail: 'a separate agent renders the OPTIONAL in-article image-nb2 photoreal images (Gemini scene + SVG text overlay -> WebP) from the author\'s image_requests, within the 2-per-1000-words budget; a vision judge gates them, one revision on fail' },
-    { title: 'Hero', detail: 'a separate agent designs each article\'s bespoke featured-image SVG after the body is FINAL (post intent-gate revision)' },
+    { title: 'Figures', detail: "a separate agent draws each article's in-article figures (SVG -> WebP) from the author's figure_requests after the body is FINAL; a vision judge gates them, one revision on fail. Runs CONCURRENTLY with the relevance gate" },
     { title: 'Cluster links', detail: 'one planner per topic cluster wires blog→blog links across its finished articles' },
     { title: 'Overlap audit', detail: 'Layer 4 — flag near-duplicate article pairs; pairs >=75 hard-block at import' },
     { title: 'Glossary gap', detail: 'flag important terms the batch relies on that are missing from the glossary' },
@@ -42,7 +40,6 @@ const briefPath = (A && A.briefPath) || ''
 const repoRoot = (A && A.repoRoot) || ''
 const indexableUrls = (A && Array.isArray(A.indexableUrls) && A.indexableUrls) || []
 const gatePath = (A && A.gatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/link-relevance-gate.md` : '')
-const heroPath = (A && A.heroPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-hero.md` : '')
 const intentGatePath = (A && A.intentGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/intent-satisfaction-gate.md` : '')
 const editorialGatePath = (A && A.editorialGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/editorial-quality-gate.md` : '')
 // The body-revising stages (intent-revise + editorial-revise) read this LEAN card
@@ -70,8 +67,6 @@ const figureJudgeCardPath = (A && A.figureJudgeCardPath) || (repoRoot ? `${repoR
 // and copies the rendered files back — so the box driving generation needs no
 // local Linux render tooling (only ssh + scp). @W in the argv -> the staged dir.
 const renderPath = (A && A.renderPath) || (repoRoot ? `${repoRoot}/tools/content_pipeline/render_on_server.sh` : '')
-const imagesPath = (A && A.imagesPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-images.md` : '')
-const imageJudgePath = (A && A.imageJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/image-judge.md` : '')
 // Layer 3 (CANNIBALIZATION-PREVENTION-PLAN.md §3) rides on each spec itself: the
 // reconcile pass writes scope_includes / scope_excludes / canonical_owner onto every
 // row, and the author brief's "One intent, one post" section enforces them as a hard
@@ -183,24 +178,6 @@ const buildGatePrompt = (spec) =>
     '   Leave every other field untouched. Write the bundle back to the SAME path.',
     `   slug MUST stay "${spec.slug}".`,
     '5. Return ONLY the compact one-line JSON status described in the brief.',
-  ].join('\n')
-
-// Hero authoring for one already-written bundle: runs AFTER the intent gate (and its
-// one revision pass) so the featured-image SVG is drawn to match the FINAL body, not a
-// draft that may still be revised. Reads the bundle, designs the hero per
-// author-hero.md, and patches a `hero` object into the bundle in place. Separated from
-// generation so the writing agent never spends context on SVG geometry.
-const buildHeroPrompt = (spec) =>
-  [
-    'Author the bespoke featured-image hero SVG for ONE already-generated project blog article.',
-    '',
-    `1. Read the hero-authoring brief IN FULL: ${heroPath}`,
-    `2. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   Read it — its h1 + title + meta_description + body_markdown tell you what to draw.',
-    '3. Design the hero per the brief, then patch a "hero" object ({svg_element, head}) into',
-    '   that bundle, leaving every other field untouched. Write the bundle back to its SAME path.',
-    `   slug MUST stay "${spec.slug}".`,
-    '4. Return ONLY the compact one-line JSON status described in the brief.',
   ].join('\n')
 
 // Figure authoring + vision gate for one already-written bundle: runs AFTER the
@@ -317,84 +294,6 @@ const FIGURE_VERDICT_SCHEMA = {
 }
 
 // image-nb2 stage: renders the per-paragraph photoreal images from the author's
-// image_requests (Gemini scene + SVG text overlay -> WebP), within the whole-post
-// 2-per-1000-words budget. NB2 is the preferred standalone-image engine, so most
-// bundles carry image_requests; the agent no-ops fast when a bundle has none
-// (it used a drawn figure instead), so the judge only runs when at least one
-// image was rendered.
-const buildImagesPrompt = (spec) =>
-  [
-    'Render the OPTIONAL in-article NB2 photoreal images for ONE already-generated project blog article.',
-    '',
-    `1. Read the images brief IN FULL: ${imagesPath}`,
-    `2. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   Read it FIRST. If "image_requests" is missing or empty, do NOTHING else and return',
-    `   {"slug":"${spec.slug}","images":0,"ok":true} — the writer used a drawn figure instead.`,
-    '3. Otherwise, for each request within the 2-per-1000-words budget, render it ON THE SERVER:',
-    `   bash ${renderPath} ${outDir} nb2_image --bundle @W/${spec.content_id}.bundle.json --id <id>`,
-    '   The wrapper patches the bundle + writes the images back locally. Render one id at a time.',
-    '   Then LOOK at each rendered <id>.png yourself (Read tool) and regenerate what is off.',
-    '4. The command patches the "images" array itself; ensure markers ↔ entries match and the',
-    `   total stays within budget. Leave every other field untouched. slug stays "${spec.slug}".`,
-    '5. Return ONLY the compact one-line JSON status described in the brief.',
-  ].join('\n')
-
-const buildImageJudgePrompt = (spec) =>
-  [
-    'Vision-judge the in-article NB2 images of ONE project blog article. Default to rejecting.',
-    '',
-    `1. Read the judge brief IN FULL: ${imageJudgePath}`,
-    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   View each image\'s rendered .png (sibling of its .webp) with the Read tool.',
-    `3. Patch the "image_gate" verdict into the bundle (leave every other field untouched;`,
-    `   SAME path; slug stays "${spec.slug}"), then return the structured verdict.`,
-  ].join('\n')
-
-const buildImagesRevisePrompt = (spec, verdict) => {
-  const failed = ((verdict && verdict.images) || []).filter((f) => f && f.approved === false)
-  return [
-    'REVISE specific in-article NB2 images of ONE project blog article (judge follow-up).',
-    '',
-    `1. Read the images brief IN FULL: ${imagesPath} (see "Revision mode").`,
-    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '3. The vision judge FAILED these images — fix exactly these, nothing else:',
-    JSON.stringify(failed, null, 2),
-    `4. Regenerate each ON THE SERVER (bash ${renderPath} ${outDir} nb2_image --bundle @W/${spec.content_id}.bundle.json --id <id>),`,
-    '   or adjust its scene_brief/overlay_text in image_requests first, then regenerate; LOOK at the new .png(s).',
-    `5. Write back to the SAME path (slug stays "${spec.slug}"); return the one-line JSON status.`,
-  ].join('\n')
-}
-
-const IMAGE_AUTHOR_STATUS_SCHEMA = {
-  type: 'object',
-  additionalProperties: true,
-  properties: { slug: { type: 'string' }, images: { type: 'number' }, ok: { type: 'boolean' } },
-  required: ['ok'],
-}
-
-const IMAGE_VERDICT_SCHEMA = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
-    slug: { type: 'string' },
-    all_approved: { type: 'boolean' },
-    images: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: true,
-        properties: {
-          id: { type: 'string' },
-          approved: { type: 'boolean' },
-          problems: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['id', 'approved'],
-      },
-    },
-  },
-  required: ['all_approved'],
-}
-
 // Intent-satisfaction gate for one already-written bundle: an ADVERSARIAL reviewer that
 // checks the finished draft actually answers its search intent and stayed inside its
 // scope fences — the one thing no other stage verifies. It patches an `intent_gate`
@@ -478,6 +377,14 @@ const COMBINED_VERDICT_SCHEMA = {
     slug: { type: 'string' },
     satisfied: { type: 'boolean' },
     reads_well: { type: 'boolean' },
+    // The editorial dimension's weakest sub-score, surfaced so the workflow can
+    // tell a real structural problem from a stylistic nit. `reads_well:false`
+    // alone is NOT enough to justify an Opus revise: the verdict is advisory at
+    // content_import (it never blocks), and in practice it fails on cohesion 3-4
+    // — "a component re-lists what the prose just said" — which costs a full
+    // rewrite round for a draft that ships either way. Only cohesion <= 2 is a
+    // seam a reader would actually trip over.
+    cohesion: { type: 'integer', minimum: 1, maximum: 5 },
     missing_essential: { type: 'array', items: { type: 'string' } },
     scope_violations: { type: 'array', items: { type: 'string' } },
     frame_mismatch: { type: 'string' },
@@ -491,41 +398,72 @@ const COMBINED_VERDICT_SCHEMA = {
 // into the single quality gate above — one Sonnet judge scores flow/cohesion/voice/seams
 // alongside intent, and the one Opus revise smooths the seams it names.)
 
-// pipeline: each article flows write -> intent-gate (+revision) -> editorial-gate
-// (+revision) -> relevance-gate -> figures -> images -> hero independently (no
-// barrier). The two body-revising gates run FIRST and in this order — intent
-// settles WHAT the article says (coverage + scope), then the editorial gate
-// settles HOW it reads (flow, cohesion, voice, the seams a stitched-together
-// assembly leaves) — so the external-source relevance gate, the figures, the
-// images, and the hero are all judged/drawn against the FINAL, polished body. A
-// failed author bundle (status null) skips the rest. The downstream content_import
-// then runs the deterministic 200 + allowlist gate on whatever external_sources
-// survived here, and blocks on an unsatisfied intent_gate verdict (override:
+// pipeline: each article flows write -> quality gate (+revision) -> post-body
+// (relevance gate ∥ figures) independently, with NO barrier anywhere. The quality
+// gate runs FIRST — it settles both WHAT the article says (coverage + scope) and
+// HOW it reads (flow, cohesion, voice, seams) — so the external-source relevance
+// gate and the figures are judged/drawn against the FINAL, polished body. A failed
+// author bundle (status null) skips the rest. The downstream content_import then
+// runs the deterministic 200 + allowlist gate on whatever external_sources survived
+// here, and blocks on an unsatisfied intent_gate verdict (override:
 // --allow-unsatisfied); the editorial_gate verdict is advisory (surfaced, not blocking).
 //
-// THROTTLE: each author agent is a heavy general-purpose run (multi web fetch + long
-// draft). Letting the runtime fan out all specs at once (cap = min(16, cores-2)) burst-
-// hammers the API and trips a server-side rate limit that fails the WHOLE batch (and
-// still burns the tokens). So we process the specs in WAVES of `waveSize` (default 4),
-// each wave a self-contained write->gate pipeline, waves run sequentially. Bounds the
-// concurrent author count regardless of the host core count.
-const waveSize = Math.max(1, (A && Number(A.waveSize)) || 4)
-const waves = []
-for (let i = 0; i < contents.length; i += waveSize) waves.push(contents.slice(i, i + waveSize))
-log(`generating in ${waves.length} wave(s) of up to ${waveSize} concurrent author(s)`)
+// THROTTLE — on the WRITE STAGE ONLY. Each author agent is a heavy general-purpose
+// run (multi web fetch + long draft). Letting the runtime fan out all specs at once
+// (cap = min(16, cores-2)) burst-hammers the API and trips a server-side rate limit
+// that fails the WHOLE batch (and still burns the tokens). So author agents pass
+// through a semaphore of `writeConcurrency` (default 4).
+//
+// This used to be implemented as sequential WAVES of `waveSize` specs, each wave a
+// self-contained write->gate->visuals pipeline behind a barrier. That throttled the
+// right thing in the wrong place: it serialized the ENTIRE 7-stage chain when only
+// the write stage needed bounding. Measured on an 11-article cluster, the barrier
+// cost 173 minutes of idle agent-slots (23% of all article work) — one article
+// finished its chain in 52 minutes and then waited 66 more for a 119-minute sibling
+// to clear the barrier, and the critical path was 244 minutes against 119 minutes of
+// actual longest-chain work. A semaphore bounds concurrent authors identically while
+// letting every downstream stage start the moment its own article is ready.
+const writeConcurrency = Math.max(1, (A && Number(A.writeConcurrency || A.waveSize)) || 4)
 
-const results = []
-for (let w = 0; w < waves.length; w++) {
-  log(`wave ${w + 1}/${waves.length}: ${waves[w].length} article(s)`)
-  const waveResults = await pipeline(
-    waves[w],
+// Minimal counting semaphore — the workflow sandbox has no Node APIs, so this is
+// hand-rolled. `limit` promises may be in flight; the rest queue in FIFO order.
+function makeSemaphore(limit) {
+  let active = 0
+  const queue = []
+  const pump = () => {
+    while (active < limit && queue.length > 0) {
+      const job = queue.shift()
+      active++
+      Promise.resolve()
+        .then(job.fn)
+        .then(job.resolve, job.reject)
+        .then(() => {
+          active--
+          pump()
+        })
+    }
+  }
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject })
+      pump()
+    })
+}
+
+const writeSlot = makeSemaphore(writeConcurrency)
+log(`generating ${contents.length} article(s) — one continuous pipeline, max ${writeConcurrency} concurrent author(s)`)
+
+const results = await pipeline(
+    contents,
     (spec) =>
-      agent(buildPrompt(spec), {
-        label: `write:${spec.slug}`,
-        phase: 'Generate',
-        agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
-        model: M_AUTHOR,
-      }).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
+      writeSlot(() =>
+        agent(buildPrompt(spec), {
+          label: `write:${spec.slug}`,
+          phase: 'Generate',
+          agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
+          model: M_AUTHOR,
+        })
+      ).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
     // Stage 2 — QUALITY GATE (merged intent + editorial). ONE Sonnet judge scores BOTH
     // coverage/scope AND flow/cohesion/voice/seams; on a real failure of EITHER dimension,
     // ONE Opus revise adds the missing substance + smooths the named seams together; ONE
@@ -543,8 +481,17 @@ for (let w = 0; w < waves.length; w++) {
         model: M_JUDGE, // judging both dimensions is verification — Sonnet, not Opus
         schema: COMBINED_VERDICT_SCHEMA,
       })
+      // Revise on a real coverage failure (intent is the HARD gate — content_import
+      // blocks on satisfied=false), or on an editorial failure severe enough to
+      // matter. `reads_well:false` on its own is not that: the editorial verdict is
+      // advisory and in practice fails on cohesion 3-4 nits, so revising on it spent
+      // an Opus round per article for drafts that shipped unchanged either way.
+      // Cohesion <= 2 is the bar for a seam a reader would actually trip over;
+      // a judge that omits the score falls back to the old behaviour.
+      const cohesion = verdict && Number.isFinite(verdict.cohesion) ? verdict.cohesion : null
+      const editorialIsSevere = verdict && verdict.reads_well === false && (cohesion === null || cohesion <= 2)
       let revised = false
-      if (verdict && (verdict.satisfied === false || verdict.reads_well === false)) {
+      if (verdict && (verdict.satisfied === false || editorialIsSevere)) {
         await agent(buildQualityRevisePrompt(spec, verdict), {
           label: `quality-revise:${spec.slug}`,
           phase: 'Quality gate',
@@ -567,119 +514,69 @@ for (let w = 0; w < waves.length; w++) {
         editorialGate: { reads_well: !!(verdict && verdict.reads_well), revised },
       }
     },
-    // Stage 4 — RELEVANCE GATE, now against the FINAL body. The intent-gate and
-    // editorial-gate revisions (if any) have already run, so external sources are
-    // fetched and judged against the article the reader will actually get.
-    (judged, spec) => {
-      if (!gatePath || !judged || judged.status == null) return { ...judged, gated: false }
-      return agent(buildGatePrompt(spec), {
-        label: `gate:${spec.slug}`,
-        phase: 'Relevance gate',
-        agentType: 'general-purpose',
-        model: M_JUDGE,
-      }).then((gate) => ({ ...judged, gated: true, gate }))
-    },
+    // Stage 3 — POST-BODY, against the FINAL body. The relevance gate and the
+    // figures chain both read only the finished article and nothing else, and
+    // neither consumes the other's output, so they run CONCURRENTLY. Measured on an
+    // 11-article cluster, serializing the post-body stages cost 338 minutes of chain
+    // against 207 minutes when overlapped.
+    //
+    // The bespoke hero and the NB2 photoreal images used to be two more stages here.
+    // They are now produced AFTER content_import by the standalone images workflow
+    // (see images.workflow.js + the `generate_post_images` command), because nothing
+    // in this run consumes them and holding the article hostage to them added ~123
+    // minutes of chain per cluster. content_import records their absence on the Post
+    // as `images_ready=False`; the standalone pass fills them in and flips the flag.
     async (judged, spec) => {
-      if (!figuresPath || !judged || judged.status == null) return { ...judged, figures: null }
-      const figAuthor = await agent(buildFiguresPrompt(spec), {
-        label: `figures:${spec.slug}`,
-        phase: 'Figures',
-        agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
-        model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
-        schema: FIGURES_STATUS_SCHEMA,
-      })
-      // NB2 no-op guard: the figures author already read the bundle, so it reports
-      // whether the bundle carries any image_requests. When it explicitly reports
-      // false we skip spawning the images-author agent entirely downstream (saves one
-      // agent per image-less article). Missing/null => run images (safe default).
-      const hasImageRequests = !(figAuthor && figAuthor.has_image_requests === false)
-      let verdict = await agent(buildFigureJudgePrompt(spec), {
-        label: `figure-judge:${spec.slug}`,
-        phase: 'Figures',
-        agentType: 'general-purpose',
-        model: M_JUDGE,
-        schema: FIGURE_VERDICT_SCHEMA,
-      })
-      let revised = false
-      if (verdict && verdict.all_approved === false) {
-        await agent(buildFiguresRevisePrompt(spec, verdict), {
-          label: `figure-revise:${spec.slug}`,
-          phase: 'Figures',
-          agentType: 'general-purpose',
-          model: M_JUDGE,
-        })
-        revised = true
-        // Re-judge once to record the honest final verdict in the bundle.
-        verdict = await agent(buildFigureJudgePrompt(spec), {
-          label: `figure-rejudge:${spec.slug}`,
-          phase: 'Figures',
-          agentType: 'general-purpose',
-          model: M_JUDGE,
-          schema: FIGURE_VERDICT_SCHEMA,
-        })
-      }
-      return { ...judged, hasImageRequests, figures: { approved: !!(verdict && verdict.all_approved), revised } }
-    },
-    async (judged, spec) => {
-      if (!imagesPath || !judged || judged.status == null) return { ...judged, images: null }
-      // NB2 no-op guard: the figures stage already reported whether the bundle has
-      // any image_requests. When it has none (common case — the author used a drawn
-      // figure instead) skip spawning the images-author agent entirely.
-      if (judged.hasImageRequests === false) return { ...judged, images: { count: 0, approved: true, revised: false } }
-      // Author-images no-ops fast when there are no image_requests (common case);
-      // only spin up the vision judge when it actually rendered something.
-      const authored = await agent(buildImagesPrompt(spec), {
-        label: `images:${spec.slug}`,
-        phase: 'Images',
-        agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
-        model: M_JUDGE, // spec-driven render orchestration (test-first Sonnet)
-        schema: IMAGE_AUTHOR_STATUS_SCHEMA,
-      })
-      const rendered = (authored && Number(authored.images)) || 0
-      if (rendered <= 0) return { ...judged, images: { count: 0, approved: true, revised: false } }
-      let verdict = await agent(buildImageJudgePrompt(spec), {
-        label: `image-judge:${spec.slug}`,
-        phase: 'Images',
-        agentType: 'general-purpose',
-        model: M_JUDGE,
-        schema: IMAGE_VERDICT_SCHEMA,
-      })
-      let revised = false
-      if (verdict && verdict.all_approved === false) {
-        await agent(buildImagesRevisePrompt(spec, verdict), {
-          label: `image-revise:${spec.slug}`,
-          phase: 'Images',
-          agentType: 'general-purpose',
-          model: M_JUDGE,
-        })
-        revised = true
-        // Re-judge once to record the honest final verdict in the bundle.
-        verdict = await agent(buildImageJudgePrompt(spec), {
-          label: `image-rejudge:${spec.slug}`,
-          phase: 'Images',
-          agentType: 'general-purpose',
-          model: M_JUDGE,
-          schema: IMAGE_VERDICT_SCHEMA,
-        })
-      }
-      return { ...judged, images: { count: rendered, approved: !!(verdict && verdict.all_approved), revised } }
-    },
-    (judged, spec) => {
-      if (!heroPath || !judged || judged.status == null) return { ...judged, hero: false }
-      return agent(buildHeroPrompt(spec), {
-        label: `hero:${spec.slug}`,
-        phase: 'Hero',
-        agentType: 'general-purpose',
-        model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
-      }).then((heroStatus) => ({ ...judged, hero: true, heroStatus }))
+      if (!judged || judged.status == null) return { ...judged, gated: false, figures: null }
+      const [gate, figures] = await parallel([
+        () => {
+          if (!gatePath) return Promise.resolve(null)
+          return agent(buildGatePrompt(spec), {
+            label: `gate:${spec.slug}`,
+            phase: 'Relevance gate',
+            agentType: 'general-purpose',
+            model: M_JUDGE,
+          })
+        },
+        async () => {
+          if (!figuresPath) return null
+          await agent(buildFiguresPrompt(spec), {
+            label: `figures:${spec.slug}`,
+            phase: 'Figures',
+            agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
+            model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
+            schema: FIGURES_STATUS_SCHEMA,
+          })
+          const verdict = await agent(buildFigureJudgePrompt(spec), {
+            label: `figure-judge:${spec.slug}`,
+            phase: 'Figures',
+            agentType: 'general-purpose',
+            model: M_JUDGE,
+            schema: FIGURE_VERDICT_SCHEMA,
+          })
+          if (!verdict || verdict.all_approved !== false) {
+            return { approved: !!(verdict && verdict.all_approved), revised: false }
+          }
+          await agent(buildFiguresRevisePrompt(spec, verdict), {
+            label: `figure-revise:${spec.slug}`,
+            phase: 'Figures',
+            agentType: 'general-purpose',
+            model: M_JUDGE,
+          })
+          // No re-judge. The figure verdict is ADVISORY — content_import only prints
+          // "figure gate NOT fully approved, review the draft preview" and imports
+          // anyway — so a second vision pass bought bookkeeping, not a decision, at
+          // ~1.4 min per revised article. The verdict below is therefore the
+          // PRE-revision one; `revised: true` is what says the figure was redrawn.
+          return { approved: false, revised: true }
+        },
+      ])
+      return { ...judged, gated: gate != null, gate, figures }
     }
   )
-  results.push(...waveResults)
-}
 
 const ok = results.filter(Boolean)
 const gatedCount = ok.filter((r) => r && r.gated).length
-const heroCount = ok.filter((r) => r && r.hero).length
 const intentChecked = ok.filter((r) => r && r.intentGate).length
 const intentSatisfied = ok.filter((r) => r && r.intentGate && r.intentGate.satisfied).length
 const intentRevised = ok.filter((r) => r && r.intentGate && r.intentGate.revised).length
@@ -689,13 +586,11 @@ const editorialRevised = ok.filter((r) => r && r.editorialGate && r.editorialGat
 const figuresRun = ok.filter((r) => r && r.figures).length
 const figuresApproved = ok.filter((r) => r && r.figures && r.figures.approved).length
 const figuresRevised = ok.filter((r) => r && r.figures && r.figures.revised).length
-const imagesArticles = ok.filter((r) => r && r.images && r.images.count > 0).length
-const imagesTotal = ok.reduce((n, r) => n + ((r && r.images && r.images.count) || 0), 0)
-log(`done: ${ok.length}/${contents.length} drafts written, ${gatedCount} passed the relevance gate, ${heroCount} heroes authored — bundles in ${outDir}`)
+log(`done: ${ok.length}/${contents.length} drafts written, ${gatedCount} passed the relevance gate — bundles in ${outDir}`)
 log(`intent gate: ${intentSatisfied}/${intentChecked} satisfied (${intentRevised} revised once); unsatisfied drafts are flagged at content_import`)
-log(`editorial gate: ${editorialPassed}/${editorialChecked} read cleanly (${editorialRevised} flow-revised once); the verdict is advisory — a residual seam is surfaced, not blocked`)
-log(`figures: ${figuresApproved}/${figuresRun} articles fully judge-approved (${figuresRevised} revised once); unapproved figures are surfaced at content_import`)
-log(`image-nb2: ${imagesTotal} photoreal image(s) across ${imagesArticles} article(s) (optional, budget 2/1000 words; over-budget blocks at content_import)`)
+log(`editorial gate: ${editorialPassed}/${editorialChecked} read cleanly (${editorialRevised} revised once — only cohesion <= 2 triggers it); the verdict is advisory`)
+log(`figures: ${figuresApproved}/${figuresRun} articles judge-approved first pass (${figuresRevised} redrawn once, not re-judged); surfaced at content_import`)
+log(`hero + NB2 images: NOT produced here — run the standalone images workflow after content_import (posts land with images_ready=False)`)
 
 // Phase 'Cluster links' — blog→blog internal linking, computed ONCE per topic
 // cluster AFTER every article in that cluster exists. This is the point where the

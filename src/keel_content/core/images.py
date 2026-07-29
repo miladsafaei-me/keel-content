@@ -197,6 +197,31 @@ def image_violations(bundle: dict | None, *, bundle_dir: Path | None) -> list[st
     ids_in_body = marker_ids(body)
     out: list[str] = []
 
+    # DEFERRED bundle — markers + image_requests, but nothing rendered yet. Since the
+    # NB2 stage moved out of the generation run this is the NORMAL shape at import:
+    # the markers become invisible anchors (:mod:`keel_content.core.pending_images`)
+    # and the standalone images pass fills them afterwards. Every check below is about
+    # rendered files, so validate what CAN be known now (pairing + budget) and return,
+    # rather than reporting a bundle's worth of phantom violations that would block a
+    # perfectly good draft.
+    if not entries and ids_in_body:
+        requested = {
+            str(r.get("id") or "").strip()
+            for r in (bundle.get("image_requests") or [])
+            if isinstance(r, dict)
+        }
+        if requested:
+            dupes = {i for i in ids_in_body if ids_in_body.count(i) > 1}
+            if dupes:
+                out.append(f"images: duplicate [[IMAGE:...]] markers: {sorted(dupes)}")
+            for iid in ids_in_body:
+                if iid not in requested:
+                    out.append(f"images: marker [[IMAGE:{iid}]] has no image_requests entry")
+            over = len(requested) - nb2_cap(len(body.split()))
+            if over > 0:
+                out.append(f"images: {len(requested)} request(s) exceed the NB2 budget by {over}")
+            return out
+
     if raw_count != len(entries):
         out.append("images: entry missing its id or file")
     dupes = {i for i in ids_in_body if ids_in_body.count(i) > 1}
