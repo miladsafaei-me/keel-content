@@ -391,7 +391,12 @@ const COMBINED_VERDICT_SCHEMA = {
     problems: { type: 'array', items: { type: 'string' } },
     seams: { type: 'array', items: { type: 'string' } },
   },
-  required: ['satisfied', 'reads_well'],
+  // `cohesion` is REQUIRED, not optional. The revise trigger below treats a missing
+  // score as "assume severe" so that an old judge keeps its old behaviour — which
+  // means a judge that simply forgets the field silently buys a full Opus revise.
+  // Requiring it closes that hole: the tool layer makes the judge retry until the
+  // score is there, and the fallback stays only as dead-man defence.
+  required: ['satisfied', 'reads_well', 'cohesion'],
 }
 
 // (The former separate editorial-quality gate + its Opus judge/revise/rejudge are merged

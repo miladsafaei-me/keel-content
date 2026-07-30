@@ -19,8 +19,13 @@ export const meta = {
 //   args.judgePath   : absolute path to content-pipeline/prompts/brief-judge.md
 //                      (agents READ these files; paths only, so the contracts stay
 //                      versioned in the repo, not frozen into this script).
-//   args.waveSize    : optional concurrency throttle (default 4 — same rationale as
-//                      generate.workflow.js: an unthrottled fan-out trips API limits).
+//   args.concurrency : optional throttle on concurrent article chains (default 8;
+//                      `waveSize` is accepted as a legacy alias). Every agent in this
+//                      workflow is Sonnet doing planning/judgement, not Opus authoring,
+//                      so it tolerates a wider fan-out than generate.workflow.js — the
+//                      old default of 4 was inherited from the Opus write stage and
+//                      throttled this stage for no reason. The runtime caps concurrent
+//                      agents at min(16, cores-2) regardless.
 //   args.limit       : optional cap for a dry-run (limit: 1 first, inspect, then full).
 
 // Per-stage model tiering (TOKEN-OPTIMIZATION-PLAN.md). Every stage in the brief
@@ -39,7 +44,34 @@ const briefPath = A.briefPath || ''
 const reviseBriefPath = A.reviseBriefPath || briefPath.replace(/brief-author\.md$/, 'brief-revise-writer.md')
 const clusterPath = A.clusterPath || ''
 const judgePath = A.judgePath || ''
-const waveSize = Math.max(1, A.waveSize || 4)
+const briefConcurrency = Math.max(1, Number(A.concurrency || A.waveSize) || 8)
+
+// Minimal counting semaphore — the workflow sandbox has no Node APIs, so this is
+// hand-rolled (same shape as generate.workflow.js). `limit` chains may be in flight;
+// the rest queue in FIFO order.
+function makeSemaphore(limit) {
+  let active = 0
+  const queue = []
+  const pump = () => {
+    while (active < limit && queue.length > 0) {
+      const job = queue.shift()
+      active++
+      Promise.resolve()
+        .then(job.fn)
+        .then(job.resolve, job.reject)
+        .then(() => {
+          active--
+          pump()
+        })
+    }
+  }
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject })
+      pump()
+    })
+}
+const briefSlot = makeSemaphore(briefConcurrency)
 const limit = A.limit || 0
 if (!contents.length) {
   throw new Error('args.contents is empty — export the cluster first: ' +
@@ -84,8 +116,10 @@ const BRIEF_SCHEMA = {
         title: { type: 'string' },
         h1: { type: 'string' },
         evidence: { type: 'array', items: { type: 'object', additionalProperties: false,
-          required: ['url', 'type', 'structure_notes'],
-          properties: { url: { type: 'string' }, type: { type: 'string' }, structure_notes: { type: 'string' } } } },
+          required: ['url', 'type', 'structure_notes', 'provenance'],
+          properties: { url: { type: 'string' }, type: { type: 'string' }, structure_notes: { type: 'string' },
+            provenance: { type: 'string', enum: ['fetched', 'archive', 'search_snippet', 'unreachable'],
+              description: 'How this page was actually read. Competitor pages 403, rate-limit and go down, and no rewrite makes an unreachable page reachable — so a labelled fallback is compliant and the judge scores the label\'s honesty, not luck with someone else\'s server. Required so that silence is not an option: claiming "fetched" for a page never loaded is the fabrication the judge fails.' } } } },
         scope_excludes: { type: 'array', items: { type: 'string' } },
         asset_predictions: { type: 'array', items: { type: 'object', additionalProperties: false,
           required: ['type', 'description', 'placement'],
@@ -310,19 +344,24 @@ const briefOne = async (spec) => {
 }
 
 const queue = limit ? contents.slice(0, limit) : contents
-log(`briefing ${queue.length} article(s) in waves of ${waveSize}` +
+log(`briefing ${queue.length} article(s) — one continuous pipeline, ` +
+    `max ${briefConcurrency} concurrent chain(s)` +
     (limit ? ` (dry-run limit ${limit} of ${contents.length})` : ''))
 
+// NO WAVE BARRIER. This used to run sequential waves of `waveSize`, each behind a
+// full barrier, so a whole wave waited on its slowest article before the next one
+// could start its first agent — the same defect measured (and removed) in
+// generate.workflow.js, where the barrier cost 173 idle agent-minutes on an
+// 11-article cluster. A semaphore bounds concurrent chains identically while letting
+// each article start the moment a slot frees.
+const results = await pipeline(queue, (spec) => briefSlot(() => briefOne(spec)))
+
 const briefs = []
-for (let i = 0; i < queue.length; i += waveSize) {
-  const wave = queue.slice(i, i + waveSize)
-  const results = await parallel(wave.map((spec) => () => briefOne(spec)))
-  for (let j = 0; j < wave.length; j++) {
-    if (!results[j]) { log(`FAILED brief: ${wave[j].slug}`); continue }
-    briefs.push(results[j])
-  }
-  log(`${briefs.length}/${queue.length} briefs done`)
+for (let j = 0; j < queue.length; j++) {
+  if (!results[j]) { log(`FAILED brief: ${queue[j].slug}`); continue }
+  briefs.push(results[j])
 }
+log(`${briefs.length}/${queue.length} briefs done`)
 
 const feas = briefs.reduce((m, b) => { m[b.feasibility] = (m[b.feasibility] || 0) + 1; return m }, {})
 const passed = briefs.filter((b) => b.brief._judge && b.brief._judge.verdict === 'pass').length
