@@ -19,9 +19,15 @@ Actions, in priority order:
 
 ``recover``   a cluster is claimed (``generating``) but nothing is running — a
               previous run died. Import whatever finished, release the rest.
-``brief``     the next cluster by demand has article rows with no brief.
+``brief``     the next cluster has article rows with no brief.
 ``generate``  the next cluster is fully briefed and ready to produce.
 ``idle``      nothing to do.
+
+Cluster ranking: whole-cluster demand (every row, any status), among clusters that
+still hold a reconciled ARTICLE row. Scoring only the leftovers made a cluster's
+rank fall as it was produced, so a half-finished cluster lost its turn to a fresh
+one; and a cluster whose only leftovers are glossary-term rows has nothing the blog
+worklist can produce, so letting it rank first stalled the loop.
 
 It is READ-ONLY. It claims nothing, changes nothing, and is safe to call on a
 timer as often as you like. The IMAGES pass is deliberately absent — visuals are
@@ -82,9 +88,28 @@ class Command(BaseCommand):
                 reason=f"cluster '{slug}' is claimed; a run may be in flight",
             )
 
-        # 2/3. The next cluster by aggregate demand, among rows that could actually
-        #      produce: reconciled, not human-only. Mirrors export_worklist's ordering
-        #      so the loop and a hand-run command never disagree about what is next.
+        # 2/3. Pick the next cluster. Two rules, both learned the hard way.
+        #
+        # A CLUSTER ONLY COUNTS IF IT HAS A RECONCILED *ARTICLE* ROW. The brief and
+        # generate actions both work the blog worklist (`export_worklist --target
+        # blog`), so a cluster whose only leftovers are glossary-term rows has
+        # nothing either action can produce. Ranking such a cluster first used to
+        # send the loop into a trap: it would emit `generate`, the session would
+        # export zero specs, the queue would not move, and three of those in a row
+        # stop the autopilot. Term rows are still counted and reported, they just
+        # cannot make a cluster "next" on their own.
+        #
+        # DEMAND IS SUMMED OVER THE WHOLE CLUSTER, NOT OVER ITS LEFTOVERS. Scoring
+        # only the reconciled rows meant a cluster's rank FELL as it was produced:
+        # `algorithmic-automated-trading-fundamentals` ranked first at 4054, then a
+        # token block killed the run after 3 of 9 articles, and the remaining 6 --
+        # already briefed -- scored 1056, below a fresh cluster at 2857. The loop
+        # walked away from a half-produced cluster, which is the one thing it must
+        # not do: the batch's overlap audit and cluster-internal-link pass run over
+        # whatever the batch contained, so splitting a cluster across two runs
+        # degrades exactly the pillar/spoke linking the topic architecture depends
+        # on. A whole-cluster score is stable, so a started cluster stays on top
+        # until it has no producible article rows left.
         candidates: dict[str, dict] = {}
         rows = (
             ContentPlan.objects.filter(status="reconciled")
@@ -96,20 +121,50 @@ class Command(BaseCommand):
                 continue
             slug = row.topic_cluster.slug
             entry = candidates.setdefault(
-                slug, {"demand": 0, "rows": 0, "unbriefed": 0, "terms": 0}
+                slug, {"demand": 0, "rows": 0, "unbriefed": 0, "terms": 0, "articles": 0}
             )
-            entry["demand"] += (row.keyword_volume or 0) + (row.competitor_traffic or 0)
             entry["rows"] += 1
             if row.target == "glossary_term":
                 entry["terms"] += 1
-            elif not row.brief:
-                # Term rows are exempt from the brief gate; article rows are not.
-                entry["unbriefed"] += 1
+            else:
+                entry["articles"] += 1
+                if not row.brief:
+                    # Term rows are exempt from the brief gate; article rows are not.
+                    entry["unbriefed"] += 1
+
+        stranded_terms = sum(
+            e["terms"] for e in candidates.values() if not e["articles"]
+        )
+        candidates = {k: v for k, v in candidates.items() if v["articles"]}
 
         if not candidates:
             return self._emit(
-                action="idle", reason="no reconciled, machine-producible rows in the queue"
+                action="idle",
+                reason=(
+                    "no reconciled article rows the pipeline can produce"
+                    + (
+                        f" ({stranded_terms} glossary-term row(s) remain, which neither "
+                        "the brief nor the generate action produces)"
+                        if stranded_terms
+                        else ""
+                    )
+                ),
             )
+
+        # Whole-cluster demand: every row of the cluster in any status, so producing
+        # part of it cannot change where it ranks.
+        totals: dict[str, int] = {}
+        for row in (
+            ContentPlan.objects.filter(topic_cluster__slug__in=list(candidates))
+            .select_related("topic_cluster")
+            .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
+        ):
+            slug = row.topic_cluster.slug
+            totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
+                row.competitor_traffic or 0
+            )
+        for slug, entry in candidates.items():
+            entry["demand"] = totals.get(slug, 0)
 
         slug, info = max(candidates.items(), key=lambda kv: kv[1]["demand"])
 
@@ -128,11 +183,17 @@ class Command(BaseCommand):
         return self._emit(
             action="generate",
             cluster=slug,
-            rows=info["rows"],
+            rows=info["articles"],
             demand=info["demand"],
             reason=(
-                f"cluster '{slug}' is next by demand ({info['demand']}), fully briefed, "
-                f"{info['rows']} row(s) ready ({info['terms']} glossary term(s))"
+                f"cluster '{slug}' is next by cluster demand ({info['demand']}), fully "
+                f"briefed, {info['articles']} article row(s) ready"
+                + (
+                    f" ({info['terms']} glossary-term row(s) also pending, not produced "
+                    "by this action)"
+                    if info["terms"]
+                    else ""
+                )
             ),
         )
 
