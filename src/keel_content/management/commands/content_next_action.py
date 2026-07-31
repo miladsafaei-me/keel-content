@@ -21,6 +21,8 @@ Actions, in priority order:
               previous run died. Import whatever finished, release the rest.
 ``brief``     the next cluster has article rows with no brief.
 ``generate``  the next cluster is fully briefed and ready to produce.
+``glossary``  no article rows left, but glossary-term rows are queued.
+``images``    no article or term rows left, but posts still need their visuals.
 ``idle``      nothing to do.
 
 Cluster ranking: whole-cluster demand (every row, any status), among clusters that
@@ -39,7 +41,7 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from keel_content.host import content_plan_model
+from keel_content.host import content_plan_model, post_model
 
 
 class Command(BaseCommand):
@@ -138,17 +140,39 @@ class Command(BaseCommand):
         candidates = {k: v for k, v in candidates.items() if v["articles"]}
 
         if not candidates:
+            # 4/5. THE FALLBACK CHAIN (Milad, 2026-07-31). An open token window with an
+            #      empty article queue used to mean `idle` — the window simply expired
+            #      unused. Two real backlogs exist that no article action touches, so
+            #      they absorb that capacity in his stated order: glossary terms first,
+            #      then images. Both stay noindex-by-default, so this widens what the
+            #      loop PRODUCES, never what it publishes.
+            Post = post_model()
+            terms = ContentPlan.objects.filter(
+                status="reconciled", target="glossary_term"
+            ).count()
+            if terms:
+                return self._emit(
+                    action="glossary",
+                    rows=terms,
+                    reason=(
+                        f"no article rows left to produce; {terms} glossary-term row(s) "
+                        "are queued, and the term pass is the next-best use of an open "
+                        "window"
+                    ),
+                )
+            pending_visuals = Post.objects.filter(images_ready=False).count()
+            if pending_visuals:
+                return self._emit(
+                    action="images",
+                    rows=pending_visuals,
+                    reason=(
+                        f"no article or glossary rows left to produce; {pending_visuals} "
+                        "post(s) still carry images_ready=False"
+                    ),
+                )
             return self._emit(
                 action="idle",
-                reason=(
-                    "no reconciled article rows the pipeline can produce"
-                    + (
-                        f" ({stranded_terms} glossary-term row(s) remain, which neither "
-                        "the brief nor the generate action produces)"
-                        if stranded_terms
-                        else ""
-                    )
-                ),
+                reason="nothing left to produce: no article rows, no glossary terms, no pending visuals",
             )
 
         # Whole-cluster demand: every row of the cluster in any status, so producing

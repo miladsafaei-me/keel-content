@@ -207,8 +207,13 @@ class Command(BaseCommand):
         if opts["claim"]:
             if not (opts["next_cluster"] or opts["cluster"]):
                 raise CommandError("--claim requires --next-cluster or --cluster.")
-            if opts["limit"]:
-                raise CommandError("--claim claims the whole cluster; --limit is incompatible.")
+            # --limit with --claim is how a token-bounded batch works: claim exactly
+            # the rows this run will produce. Without it the claim spans the whole
+            # cluster, the run dies when the 5-hour window closes, and every leftover
+            # row sits in `generating` until a recover tick releases it — measured
+            # overnight as 26 of 149 agents killed mid-article, their tokens spent and
+            # their output lost. Claiming the batch instead lets the window close
+            # BETWEEN articles.
             slug, claimed_pks = self._select_and_claim(statuses, targets, opts)
             if slug is None:
                 self.stderr.write(self.style.WARNING("Queue is empty — no cluster left to generate."))
@@ -423,8 +428,10 @@ class Command(BaseCommand):
         sibling session claims the picked cluster first, this transaction sees its
         rows leave the queue and re-picks the next cluster. Returns
         ``(slug, [claimed_pk, ...])`` or ``(None, [])`` when the queue is empty.
-        The claim spans the WHOLE cluster across sources and targets (articles +
-        queued glossary terms) — never per-source. Only rows that pass the
+        The claim spans the whole cluster across sources and targets (articles +
+        queued glossary terms) — never per-source — UNLESS ``--limit`` bounds it to
+        one batch, which is how a run sized to the token window claims only what it
+        will finish. Only rows that pass the
         generation gates are claimed — a held-back row (human-only, or unbriefed
         keyword row) stays in its queue status.
         """
@@ -444,11 +451,16 @@ class Command(BaseCommand):
                 if not nxt:
                     return None, []
                 slug = nxt["topic_cluster__slug"]
-            claimed = list(
-                base.select_for_update()
-                .filter(topic_cluster__slug=slug)
-                .values_list("pk", flat=True)
-            )
+            picked = base.select_for_update().filter(topic_cluster__slug=slug)
+            if opts["limit"]:
+                # Same ordering the emitted worklist uses, so the claimed rows and the
+                # exported rows are the same rows. Articles before glossary terms: a
+                # term row is not producible by the generation workflow, so letting one
+                # occupy a batch slot would silently shrink the batch.
+                picked = picked.order_by(
+                    "target", "-keyword_volume", "-competitor_traffic", "pk"
+                )[: opts["limit"]]
+            claimed = list(picked.values_list("pk", flat=True))
             if not claimed:
                 # A concurrent session claimed this cluster between pick and lock.
                 if explicit:
