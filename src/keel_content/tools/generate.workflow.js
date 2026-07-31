@@ -284,9 +284,21 @@ const FIGURE_VERDICT_SCHEMA = {
         properties: {
           id: { type: 'string' },
           approved: { type: 'boolean' },
+          // Does a REDRAW actually fix this? Measured on the first 11-article batch,
+          // 4 of the 6 recorded problems were density or whitespace notes -- the
+          // categories the judge contract already calls advisory -- yet every one of
+          // them bought a full redraw, because the trigger only ever read
+          // `all_approved`. Worse, `all_approved:false` fired on 6 articles while only
+          // 4 figures were individually rejected, so two redraws ran with no rejected
+          // figure at all. Writing "advisory" in the prompt was not enough; the
+          // decision has to be a field the code reads.
+          blocking: {
+            type: 'boolean',
+            description: 'true ONLY for a defect a redraw can actually fix and a reader would actually trip over: labels colliding or below legible size, truncated or overflowing text, wrong palette or typeface, or a figure whose comprehension_job is not conveyed at all. Density, word count, whitespace, canvas balance and sibling-consistency notes are ADVISORY: report them in problems with blocking=false. If in doubt it is not blocking.',
+          },
           problems: { type: 'array', items: { type: 'string' } },
         },
-        required: ['id', 'approved'],
+        required: ['id', 'approved', 'blocking'],
       },
     },
   },
@@ -559,7 +571,16 @@ const results = await pipeline(
             model: M_JUDGE,
             schema: FIGURE_VERDICT_SCHEMA,
           })
-          if (!verdict || verdict.all_approved !== false) {
+          // Redraw only when a rejected figure is BLOCKING. `all_approved` alone
+          // over-fires in both directions: it went false for articles whose every
+          // figure was individually approved, and it treated an advisory density
+          // note exactly like an illegible label. A figure that is merely dense
+          // ships with its note surfaced at content_import, which is what the
+          // verdict was always for -- it is advisory there, and content_import
+          // imports the draft either way.
+          const figs = (verdict && Array.isArray(verdict.figures) && verdict.figures) || []
+          const mustRedraw = figs.some((f) => f && f.approved === false && f.blocking === true)
+          if (!verdict || !mustRedraw) {
             return { approved: !!(verdict && verdict.all_approved), revised: false }
           }
           await agent(buildFiguresRevisePrompt(spec, verdict), {
