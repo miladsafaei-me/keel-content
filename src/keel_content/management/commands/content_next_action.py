@@ -19,6 +19,7 @@ Actions, in priority order:
 
 ``recover``   a cluster is claimed (``generating``) but nothing is running — a
               previous run died. Import whatever finished, release the rest.
+``relink``    a cluster finished producing; wire its links across the whole set.
 ``brief``     the next cluster has article rows with no brief.
 ``generate``  the next cluster is fully briefed and ready to produce.
 ``glossary``  no article rows left, but glossary-term rows are queued.
@@ -41,7 +42,7 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from keel_content.host import content_plan_model, post_model
+from keel_content.host import content_plan_model, post_model, topic_cluster_model
 
 
 class Command(BaseCommand):
@@ -90,7 +91,52 @@ class Command(BaseCommand):
                 reason=f"cluster '{slug}' is claimed; a run may be in flight",
             )
 
-        # 2/3. Pick the next cluster. Two rules, both learned the hard way.
+        # 2. RELINK — a cluster that has just finished producing its articles.
+        #    A cluster is only really finished when its blog->blog links are wired, and
+        #    that pass runs over whatever a single generation batch contained. Since
+        #    runs are now sized to the token window, a cluster is produced across
+        #    several batches, so the in-batch pass can only ever link forward: articles
+        #    written later see their already-produced siblings (spec.cluster_siblings),
+        #    but the earlier ones were finalized and never link back. For a pillar
+        #    produced first — the usual case — that is the wrong direction to lose.
+        #    One whole-cluster pass afterwards repairs it, and this action schedules it.
+        #
+        #    Self-limiting by design: the marker in TopicCluster.brief records the
+        #    article count it was computed at, so a finished cluster is scheduled once,
+        #    and adding a later article to that cluster re-arms it exactly once more.
+        TopicCluster = topic_cluster_model()
+        blocked, produced, clusters = set(), {}, {}
+        for row in (
+            ContentPlan.objects.filter(target="blog")
+            .exclude(feasibility="human_only")
+            .select_related("topic_cluster")
+        ):
+            if not row.topic_cluster_id:
+                continue
+            slug = row.topic_cluster.slug
+            clusters[slug] = row.topic_cluster
+            if row.status in ("reconciled", "generating"):
+                blocked.add(slug)
+            if row.produced_post_id:
+                produced[slug] = produced.get(slug, 0) + 1
+        for slug, n in sorted(produced.items(), key=lambda kv: -kv[1]):
+            if slug in blocked or n < 2:
+                continue
+            marker = (clusters[slug].brief or {}).get("relinked") or {}
+            if marker.get("articles") == n:
+                continue
+            return self._emit(
+                action="relink",
+                cluster=slug,
+                rows=n,
+                reason=(
+                    f"cluster '{slug}' has finished producing ({n} article(s), none left "
+                    "in the queue) and its internal links have not been wired across the "
+                    "whole cluster yet"
+                ),
+            )
+
+        # 3/4. Pick the next cluster. Two rules, both learned the hard way.
         #
         # A CLUSTER ONLY COUNTS IF IT HAS A RECONCILED *ARTICLE* ROW. The brief and
         # generate actions both work the blog worklist (`export_worklist --target

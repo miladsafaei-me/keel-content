@@ -57,7 +57,7 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         if opts["mode"] == "export":
             return self._export(opts["cluster"])
-        return self._apply(opts["plan"], opts["backup"], opts["dry_run"])
+        return self._apply(opts["plan"], opts["backup"], opts["dry_run"], opts["cluster"])
 
     def _export(self, cluster: str | None):
         plans = _produced_plans(cluster)
@@ -83,13 +83,48 @@ class Command(BaseCommand):
             )
         self.stdout.write(json.dumps({"clusters": list(clusters.values())}, ensure_ascii=False))
 
-    def _apply(self, plan_path: str | None, backup_path: str | None, dry_run: bool):
+    def _stamp(self, cluster: str | None, dry_run: bool) -> None:
+        """Record that this cluster has been relinked at its current article count.
+
+        The autopilot needs a durable, self-limiting answer to "is this cluster
+        already wired?" — otherwise a finished cluster would be re-planned on every
+        tick forever. The marker lives in ``TopicCluster.brief`` (already a JSONField,
+        so no migration) and stores the produced-article count it was computed at, so
+        adding a later article to the cluster naturally re-arms it exactly once.
+        """
+        if not cluster or dry_run:
+            return
+        TopicCluster = host.topic_cluster_model()
+        tc = TopicCluster.objects.filter(slug=cluster).first() or TopicCluster.objects.filter(name=cluster).first()
+        if tc is None:
+            self.stderr.write(f"cluster {cluster!r} not found — marker not written")
+            return
+        produced = ContentPlan.objects.filter(
+            topic_cluster=tc, target="blog", produced_post__isnull=False
+        ).count()
+        brief = dict(tc.brief or {})
+        brief["relinked"] = {"articles": produced}
+        tc.brief = brief
+        tc.save(update_fields=["brief"])
+        self.stdout.write(f"marked {tc.slug} relinked at {produced} article(s)")
+
+    def _apply(self, plan_path: str | None, backup_path: str | None, dry_run: bool, cluster: str | None = None):
         if not plan_path:
             raise CommandError("apply requires --plan PATH")
         if not dry_run and not backup_path:
             raise CommandError("apply requires --backup PATH (omit only with --dry-run)")
         with open(plan_path, encoding="utf-8") as fh:
-            edges_by_slug = (json.load(fh) or {}).get("edges") or {}
+            plan = json.load(fh) or {}
+        edges_by_slug = plan.get("edges") or {}
+        # OPTIONAL surgical rewrites. apply_internal_links can only link a phrase that
+        # already exists in the prose — it matches the anchor verbatim and otherwise
+        # reports "anchor not found". So a genuinely useful edge whose anchor has no
+        # natural host used to be silently unlinkable. A rewrite is the smallest
+        # possible fix: ONE sentence replaced by a version that carries the phrase.
+        # Deliberately NOT a body rewrite — the rest of the article is untouched, the
+        # match is exact, and anything that does not match exactly once is skipped and
+        # reported rather than guessed at.
+        rewrites_by_slug = plan.get("rewrites") or {}
 
         valid_slugs = set(Post.objects.values_list("slug", flat=True))
         posts = {p.slug: p for p in Post.objects.filter(slug__in=list(edges_by_slug))}
@@ -103,7 +138,8 @@ class Command(BaseCommand):
             with open(backup_path, "w", encoding="utf-8") as fh:
                 json.dump(backup, fh, ensure_ascii=False, indent=2)
 
-        totals = {"posts": 0, "inserted": 0, "dropped_self": 0, "dropped_unknown": 0, "skipped": 0}
+        totals = {"posts": 0, "inserted": 0, "dropped_self": 0, "dropped_unknown": 0,
+                  "skipped": 0, "rewrites": 0, "rewrites_skipped": 0}
         for slug, edges in edges_by_slug.items():
             post = posts.get(slug)
             if post is None:
@@ -124,6 +160,20 @@ class Command(BaseCommand):
                 resolved.append({"anchor": anchor, "target_url": f"/blog/{target}"})
 
             clean = strip_internal_blog_links(post.content_markdown_source or "")
+            for rw in rewrites_by_slug.get(slug) or []:
+                find = (rw.get("find") or "").strip()
+                repl = (rw.get("replace") or "").strip()
+                if not find or not repl:
+                    continue
+                hits = clean.count(find)
+                if hits != 1:
+                    totals["rewrites_skipped"] += 1
+                    self.stderr.write(
+                        f"  rewrite skipped in {slug}: source sentence matched {hits} time(s), need exactly 1"
+                    )
+                    continue
+                clean = clean.replace(find, repl, 1)
+                totals["rewrites"] += 1
             new_md, report = apply_internal_links(clean, resolved)
             totals["posts"] += 1
             totals["inserted"] += len(report.applied)
@@ -141,3 +191,4 @@ class Command(BaseCommand):
             host.refresh_article_rendered(post)
 
         self.stdout.write(self.style.SUCCESS(json.dumps(totals)))
+        self._stamp(cluster, dry_run)

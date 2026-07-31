@@ -516,14 +516,16 @@ const results = await pipeline(
           model: M_AUTHOR, // the substance-add / prose-rewrite stays Opus
         })
         revised = true
-        // Re-judge once to record the honest final verdicts in the bundle.
-        verdict = await agent(buildQualityGatePrompt(spec), {
-          label: `quality-rejudge:${spec.slug}`,
-          phase: 'Quality gate',
-          agentType: 'general-purpose',
-          model: M_JUDGE,
-          schema: COMBINED_VERDICT_SCHEMA,
-        })
+        // NO RE-JUDGE. Nothing downstream branches on a second verdict — there is no
+        // second revision, and content_import blocks on intent_gate.satisfied, which
+        // the revise it just ran exists to fix. So the pass bought bookkeeping, not a
+        // decision, at one Sonnet read of a full article per revised piece. Exactly
+        // the argument already accepted for the figure re-judge; keeping one and not
+        // the other left two identical stages behaving differently.
+        //
+        // The verdict recorded below is therefore the PRE-revision one, and
+        // `revised: true` is what says it was addressed — same contract the figure
+        // gate uses, visible the same way in /admin-os.
       }
       return {
         ...authored,
