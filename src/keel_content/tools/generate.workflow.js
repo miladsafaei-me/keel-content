@@ -120,6 +120,18 @@ const buildPrompt = (spec) => {
   return [
     'Generate ONE project blog article from the spec below, following the author brief IN FULL.',
     '',
+    // RESUME ACROSS A TOKEN WINDOW. The 5-hour window closes mid-batch routinely, and
+    // when it does the run dies wherever it stood. A bundle on disk is complete by
+    // construction (the author writes it only at the end), so a body that survived is
+    // finished work — but the next run used to rewrite it from scratch, because nothing
+    // looked. Measured cost of that: `best-algorithmic-trading-strategies` kept a
+    // 30,086-character body with a satisfied intent gate, lost only its figure stage,
+    // was refused by content_import for the missing figure, and was fully re-authored in
+    // a later window. The write stage is Opus and 44% of the batch's tokens; re-paying
+    // for it because a Sonnet figure agent did not get to run is the single most
+    // wasteful thing this pipeline does.
+    `0. RESUME CHECK, before anything else. If ${outDir}/${spec.content_id}.bundle.json already exists AND carries a non-empty body_markdown AND an intent_gate with satisfied=true, then a previous run already wrote this article and only its downstream stages were cut short. Do NOT rewrite it and do NOT re-read the brief: return {"slug": "${spec.slug}", "bundle_path": "${outDir}/${spec.content_id}.bundle.json", "status": "reused"} immediately. The later stages run again over the existing bundle, which is exactly what it needs. Anything less than all three conditions means write the article normally.`,
+    '',
     `1. Read the author brief first: ${briefPath}`,
     `2. repoRoot for every other read (BLOG.md, BUSINESS.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
     '   You do NOT need to load the full CLAUDE.md — the author brief already distills every',
