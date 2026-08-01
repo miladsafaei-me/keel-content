@@ -7,7 +7,9 @@ workflow just patched and, per post:
 * renders the authored hero SVG and points ``featured_image_url`` at it, replacing
   the generic fallback ``content_import`` attached at draft time;
 * fills every pending-image anchor left in the stored body with the final
-  ``<figure>`` markup for its rendered WebP;
+  ``<figure>`` markup for its rendered WebP, then refreshes ``content_rendered``
+  from it — that derived field is what the page serves, so skipping the refresh
+  leaves every reader looking at the empty anchor;
 * sets ``images_ready=True`` and clears ``pending_visuals``.
 
     manage.py apply_post_images /tmp/visuals
@@ -24,6 +26,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from keel_content import host
 from keel_content.core.pending_images import apply_rendered_images, has_pending_anchors
 from keel_content.host import post_model
 
@@ -117,6 +120,15 @@ class Command(BaseCommand):
                     post.images_ready = not still_pending or opts["force_ready"]
                     post.pending_visuals = {}
                     post.save(update_fields=sorted(set(update_fields)))
+                    if images:
+                        # ``content_raw`` is the source, but the page serves
+                        # ``content_rendered`` (``Post.content`` prefers it). Without
+                        # this refresh the figures exist only in the source and every
+                        # reader still sees the empty anchor — while ``images_ready``
+                        # says the post is cleared. Same call ``retrofit`` makes after
+                        # it writes ``content_raw``.
+                        host.refresh_article_rendered(post)
+                        notes.append("rendered refreshed")
 
             state = "ready" if (not has_pending_anchors(post.content_raw or "") or opts["force_ready"]) else "STILL PENDING"
             prefix = "  ~ dry  " if dry else "  + done "

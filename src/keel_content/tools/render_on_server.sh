@@ -38,7 +38,12 @@ MEDIA_VOLUME="${PIPELINE_MEDIA_VOLUME:?set PIPELINE_MEDIA_VOLUME=<media volume>}
 WEB_CONTAINER="${PIPELINE_WEB_CONTAINER:?set PIPELINE_WEB_CONTAINER=<web container name>}"
 
 DIRNAME="$(basename "$LOCAL_DIR")"
-REMOTE_DIR="pipeline-render/$DIRNAME"          # under the server user's HOME
+# UNIQUE per invocation. Keying the remote dir on the local dir's basename alone
+# made every concurrent render of the same batch share one remote dir, and step 3
+# copied the WHOLE dir back down — so one agent's download could overwrite a
+# sibling agent's freshly patched bundle with the copy it had staged moments
+# earlier. That loss is silent: the bundle simply lacks its hero or its images.
+REMOTE_DIR="pipeline-render/$DIRNAME.$$-$(date +%s%N)"   # under the server user's HOME
 
 # Rewrite @W -> /work in every argv token (the staged dir is mounted at /work).
 ARGS=()
@@ -49,18 +54,19 @@ for a in "$@"; do ARGS+=("${a//@W//work}"); done
 # live container's own DB + secret env (written to a 600 file on the server) and
 # put it on the DB network, so that resolution works natively — no piecemeal
 # fetching, no stale schema defaults.
-RENDER_ENV="\$HOME/.cache/keel-render.env"
+# Written per invocation and read once by --env-file; a single shared path would
+# let one render read it while a concurrent one truncates it mid-write.
+RENDER_ENV="\$HOME/.cache/keel-render.$$-$(date +%s%N).env"
 ssh "$HOST" "mkdir -p ~/.cache && podman exec $WEB_CONTAINER env \
   | grep -E '^(POSTGRES_|DJANGO_SECRET_KEY|REDIS_URL|CELERY_)' > $RENDER_ENV \
   && chmod 600 $RENDER_ENV"
 
-# 1) stage the bundle dir up. The remote dir is keyed only on the local dir's
-#    basename, so a later batch reusing that name would inherit whatever the
-#    previous batch left behind — and step 3 copies the WHOLE dir back down,
-#    re-injecting those stale artifacts into the live batch. Wipe before staging
-#    so the remote side is always an exact mirror of this batch.
+# 1) stage the bundle dir up (the dir is single-use, so it starts empty and can
+#    never inherit a previous batch's artifacts), then drop a marker so step 3
+#    can tell which files this render actually produced.
 ssh "$HOST" "rm -rf ~/$REMOTE_DIR && mkdir -p ~/$REMOTE_DIR"
 scp -q -r "$LOCAL_DIR/." "$HOST:~/$REMOTE_DIR/"
+ssh "$HOST" "touch ~/$REMOTE_DIR/.render-marker"
 
 # 2) render inside an isolated, memory-capped, throwaway container on the DB
 #    network. --entrypoint python bypasses the web entrypoint (no
@@ -71,5 +77,14 @@ ssh "$HOST" "podman run --rm --memory=$MEMORY --network $NETWORK \
   -v ~/$REMOTE_DIR:/work:z -v $MEDIA_VOLUME:/app/backend/media:z \
   $IMAGE manage.py ${ARGS[*]}"
 
-# 3) pull the rendered files (+ patched bundle json) back down
-scp -q -r "$HOST:~/$REMOTE_DIR/." "$LOCAL_DIR/"
+# 3) pull back ONLY what this render wrote (+ the bundle json it patched), never
+#    the whole staged mirror — anything else in the dir may have been updated
+#    locally by a sibling agent while this render was running.
+CHANGED="$(ssh "$HOST" "cd ~/$REMOTE_DIR && find . -type f -newer .render-marker -printf '%P\n'")"
+for f in $CHANGED; do
+  mkdir -p "$LOCAL_DIR/$(dirname "$f")"
+  scp -q "$HOST:~/$REMOTE_DIR/$f" "$LOCAL_DIR/$f"
+done
+
+# 4) the staging dir is single-use — leave nothing behind to accumulate or leak.
+ssh "$HOST" "rm -rf ~/$REMOTE_DIR $RENDER_ENV"
