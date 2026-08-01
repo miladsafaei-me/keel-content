@@ -516,16 +516,33 @@ const results = await pipeline(
           model: M_AUTHOR, // the substance-add / prose-rewrite stays Opus
         })
         revised = true
-        // NO RE-JUDGE. Nothing downstream branches on a second verdict — there is no
-        // second revision, and content_import blocks on intent_gate.satisfied, which
-        // the revise it just ran exists to fix. So the pass bought bookkeeping, not a
-        // decision, at one Sonnet read of a full article per revised piece. Exactly
-        // the argument already accepted for the figure re-judge; keeping one and not
-        // the other left two identical stages behaving differently.
+        // RE-JUDGE, but ONLY when the HARD gate was the thing that failed.
         //
-        // The verdict recorded below is therefore the PRE-revision one, and
-        // `revised: true` is what says it was addressed — same contract the figure
-        // gate uses, visible the same way in /admin-os.
+        // The revise rewrites the BODY; nothing in it rewrites the bundle's
+        // `intent_gate` object, which the judge stage wrote. So skipping the re-judge
+        // left the PRE-revision `satisfied:false` standing in the bundle — and
+        // content_import hard-blocks on exactly that field. The result was not
+        // "bookkeeping": every article that ever tripped the intent gate became
+        // permanently unimportable, was released back to the queue, regenerated on the
+        // next tick, and blocked again — a silent production loop that spent a full
+        // token window per lap. (Observed on ai-forecasting-tools-do-they-beat-analysts,
+        // 2026-08-01.) A verdict something downstream BLOCKS on has to be honest.
+        //
+        // The token saving the skip was after is kept where it was actually free: an
+        // editorial-only failure is ADVISORY at import, so a revise triggered by that
+        // alone still records the pre-revision verdict and costs no second read.
+        if (verdict.satisfied === false) {
+          const rejudged = await agent(buildQualityGatePrompt(spec), {
+            label: `quality-rejudge:${spec.slug}`,
+            phase: 'Quality gate',
+            agentType: 'general-purpose',
+            model: M_JUDGE,
+            schema: COMBINED_VERDICT_SCHEMA,
+          })
+          // A dead re-judge must not upgrade the draft by default: keep the failing
+          // verdict the bundle already carries and let import surface it.
+          if (rejudged) verdict = rejudged
+        }
       }
       return {
         ...authored,
