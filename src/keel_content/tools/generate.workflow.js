@@ -452,7 +452,18 @@ const COMBINED_VERDICT_SCHEMA = {
 // to clear the barrier, and the critical path was 244 minutes against 119 minutes of
 // actual longest-chain work. A semaphore bounds concurrent authors identically while
 // letting every downstream stage start the moment its own article is ready.
-const writeConcurrency = Math.max(1, (A && Number(A.writeConcurrency || A.waveSize)) || 4)
+// 4 -> 6 on 2026-08-01, when the binding constraint flipped. On Max 5x the token
+// budget ran out long before the window did, so more concurrent authors only spent
+// the same budget faster; measured on Max 20x, a window reached 253 of 300 minutes
+// with 55% of its tokens unused, which is the opposite problem — the clock now runs
+// out first and unspent capacity is pure loss.
+//
+// 6 and not 8, because the runtime caps concurrent agents at min(16, cores-2) = 10
+// PER WORKFLOW and that cap covers every stage, not just authors. Peak concurrency
+// measured at 8 with 4 authors, so the downstream gates and figures already occupy
+// about 4 slots; 6 authors sits at the cap and 8 would starve the very stages the
+// authors feed. Going past this needs a second workflow, not a bigger number.
+const writeConcurrency = Math.max(1, (A && Number(A.writeConcurrency || A.waveSize)) || 6)
 
 // Minimal counting semaphore — the workflow sandbox has no Node APIs, so this is
 // hand-rolled. `limit` promises may be in flight; the rest queue in FIFO order.
