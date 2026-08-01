@@ -38,7 +38,13 @@ const heroPath = (A && A.heroPath) || `${repoRoot}/content-pipeline/prompts/auth
 const imagesPath = (A && A.imagesPath) || `${repoRoot}/content-pipeline/prompts/author-images.md`
 const imageJudgePath = (A && A.imageJudgePath) || `${repoRoot}/content-pipeline/prompts/image-judge.md`
 const renderPath = (A && A.renderPath) || `${repoRoot}/tools/content_pipeline/render_on_server.sh`
-const concurrency = Math.max(1, Number(A && A.concurrency) || 6)
+// 6 -> 10, the runtime's own ceiling of min(16, cores-2). Measured 2026-08-01, a
+// visuals agent costs 16 turns and ~790k tokens of context against 88 turns and
+// ~9.9M for an article author, so this stage cannot exhaust a token window the way
+// generation can — and unlike generation it has no expensive downstream chain
+// competing for the same agent slots, so the cap is the right number rather than a
+// number to stay safely under.
+const concurrency = Math.max(1, Number(A && A.concurrency) || 10)
 
 // Both jobs are spec-driven visual production judged by looking at pixels — Sonnet,
 // not Opus. Same call the generator made when these stages lived inside it.
