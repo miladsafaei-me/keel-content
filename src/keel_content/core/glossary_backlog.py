@@ -216,16 +216,30 @@ def remove(term: str) -> bool:
 
     Called by ``persist_glossary_terms`` right after it stages a term. The live
     ``Tag`` may not exist yet (the persist step ships a data migration), so the
-    row flips to ``drafted`` now and ``contentplan_backfill`` links
-    ``produced_term`` once the migration has run. Returns True when a queued row
-    matched.
+    row advances to ``drafted`` ONLY when the Tag is already live; otherwise it
+    stays ``generating`` (claimed/in-progress). ``contentplan_backfill`` then
+    promotes ``generating`` -> ``drafted`` and links ``produced_term`` once the
+    migration has created the Tag. Returns True when a queued row matched.
+
+    Why not flip straight to ``drafted``: a run that marks a term done but never
+    actually ships its content+migration would otherwise strand the row as a
+    content-less ``drafted`` page — invisible to the fallback glossary pass
+    (which only produces ``reconciled`` rows) and to cluster recovery (glossary
+    terms aren't cluster-claimed), so it never gets produced. Keeping it
+    ``generating`` until the Tag exists makes that state honest and recoverable,
+    and — because the pass never re-produces a ``generating`` row — introduces no
+    re-authoring in the window before the persist migration deploys.
     """
     ContentPlan, _Tag, _TC = _models()
     plan = _pending_row_for(term)
     if plan is None:
         return False
-    plan.produced_term = _live_term_for(term)
-    plan.status = ContentPlan.Status.DRAFTED
+    live = _live_term_for(term)
+    plan.produced_term = live
+    plan.status = (
+        ContentPlan.Status.DRAFTED if live is not None
+        else ContentPlan.Status.GENERATING
+    )
     plan.save()
     return True
 
