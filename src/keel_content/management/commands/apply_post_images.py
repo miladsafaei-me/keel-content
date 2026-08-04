@@ -111,6 +111,20 @@ class Command(BaseCommand):
                     if not dry:
                         post.content_raw = filled
                         update_fields.append("content_raw")
+                        # The editable markdown source carries the same deferred
+                        # anchors. Fill them here too, otherwise it keeps the empty
+                        # anchor forever and a later Markdown-tab edit re-serializes
+                        # that gap over the figure — silently dropping the image
+                        # while ``images_ready`` says the post is done. store_image_file
+                        # is content-hashed + idempotent, so applying the same bundle
+                        # to both fields in one run resolves to the same media URL.
+                        md_src = post.content_markdown_source or ""
+                        if has_pending_anchors(md_src):
+                            md_filled, _ = apply_rendered_images(
+                                md_src, images, bundle_dir=path.parent, slug=post.slug
+                            )
+                            post.content_markdown_source = md_filled
+                            update_fields.append("content_markdown_source")
                     notes.append(f"{len(report.placed)} image(s)")
                     if report.unmatched:
                         notes.append(f"{len(report.unmatched)} anchor(s) still unfilled")
