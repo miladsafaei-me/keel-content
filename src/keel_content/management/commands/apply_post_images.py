@@ -10,7 +10,9 @@ workflow just patched and, per post:
   ``<figure>`` markup for its rendered WebP, then refreshes ``content_rendered``
   from it — that derived field is what the page serves, so skipping the refresh
   leaves every reader looking at the empty anchor;
-* sets ``images_ready=True`` and clears ``pending_visuals``.
+* sets ``images_ready=True`` and clears ``pending_visuals`` — but only for a post
+  that genuinely finished. One that still holds anchors keeps its work order, so a
+  later run can retry it instead of finding an unfillable body.
 
     manage.py apply_post_images /tmp/visuals
 
@@ -132,7 +134,16 @@ class Command(BaseCommand):
                 still_pending = has_pending_anchors(post.content_raw or "")
                 if not dry:
                     post.images_ready = not still_pending or opts["force_ready"]
-                    post.pending_visuals = {}
+                    # ONLY CLEAR THE WORK ORDER WHEN THE POST IS ACTUALLY DONE.
+                    # Clearing it unconditionally stranded posts permanently: a body
+                    # that still held anchors lost the `image_requests` describing
+                    # them, so every later export produced a bundle nothing could
+                    # fill, and the post answered "pending" forever with no way back.
+                    # Eight prop-firm drafts sat in exactly that state. Keeping the
+                    # order when the post did not finish also preserves the attempt
+                    # counter and block marker the images queue runs on.
+                    if post.images_ready:
+                        post.pending_visuals = {}
                     post.save(update_fields=sorted(set(update_fields)))
                     if images:
                         # ``content_raw`` is the source, but the page serves

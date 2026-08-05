@@ -22,7 +22,8 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from keel_content.host import post_model
+from keel_content.core import visual_queue
+from keel_content.host import content_plan_model, post_model
 
 
 class Command(BaseCommand):
@@ -32,11 +33,18 @@ class Command(BaseCommand):
         parser.add_argument("--out", required=True, help="directory to write the work orders into")
         parser.add_argument("--slug", action="append", default=[],
                             help="limit to these slugs (repeatable); default = every pending post")
+        parser.add_argument("--cluster",
+                            help="limit to the posts produced by one topic cluster. The "
+                                 "autopilot images a cluster right after it produces it, "
+                                 "so a cluster becomes publishable before the next starts.")
         parser.add_argument("--limit", type=int, default=0,
                             help="cap how many posts to export this batch (0 = no cap)")
         parser.add_argument("--include-published", action="store_true",
                             help="also export published posts (default: drafts only — a "
                                  "published post missing its visuals is a separate cleanup)")
+        parser.add_argument("--include-blocked", action="store_true",
+                            help="also export posts marked blocked by flag_stuck_visuals "
+                                 "(default: skipped — they are waiting on a human)")
 
     def handle(self, *args, **opts):
         out_dir = Path(opts["out"])
@@ -49,11 +57,20 @@ class Command(BaseCommand):
                 "that adds it (0002_post_images_ready) before running the images pass"
             )
 
-        qs = Post.objects.filter(images_ready=False)
+        qs = visual_queue.pending_posts(
+            Post,
+            include_published=opts["include_published"],
+            include_blocked=opts["include_blocked"],
+        )
         if opts["slug"]:
             qs = qs.filter(slug__in=opts["slug"])
-        if not opts["include_published"]:
-            qs = qs.exclude(status="published")
+        if opts["cluster"]:
+            ids = visual_queue.post_ids_for_cluster(content_plan_model(), opts["cluster"])
+            if not ids:
+                raise CommandError(
+                    f"no produced post belongs to topic cluster '{opts['cluster']}'"
+                )
+            qs = qs.filter(id__in=ids)
         qs = qs.order_by("created_at")
         if opts["limit"]:
             qs = qs[: opts["limit"]]

@@ -26,7 +26,7 @@ are produced afterwards, on their own schedule, at full concurrency.
 
 ```bash
 # 1. Export a work order per post whose visuals do not exist yet
-manage.py export_pending_visuals --out /tmp/visuals
+manage.py export_pending_visuals --out /tmp/visuals [--cluster <topic-cluster-slug>]
 #    -> /tmp/visuals/<slug>.bundle.json  +  /tmp/visuals/manifest.json
 
 # 2. Produce them (multi-agent; hero + NB2 per post, all posts concurrent)
@@ -39,6 +39,29 @@ manage.py apply_post_images /tmp/visuals
 
 Step 2 renders on the server through `render_on_server.sh`, exactly like the figure
 and NB2 stages always did — the orchestrating machine needs only `ssh` + `scp`.
+
+`--cluster` exists because a consumer's loop may draw a cluster's visuals right
+after producing it, so the cluster becomes publishable before the next one starts.
+Without it the pass takes every pending post.
+
+## Posts the machine cannot draw
+
+A queue that must reach zero before other work resumes needs a way to stop waiting
+on a post that will never finish — a body whose anchors lost their requests, a hero
+the judge rejects every time, a bundle that will not render. `flag_stuck_visuals`
+charges one attempt per post per finished run and, past the budget, writes a
+`blocked` marker onto `pending_visuals`. Blocked posts are excluded from
+`export_pending_visuals` (override with `--include-blocked`) and from any
+pending count.
+
+```bash
+manage.py flag_stuck_visuals --cluster <slug> --max-attempts 2 --json   # after a run
+manage.py flag_stuck_visuals --list                                     # what is stuck, and why
+manage.py flag_stuck_visuals --unblock <slug>                           # requeue after a human fix
+```
+
+Charge attempts only after a run that genuinely attempted the scope. A run killed
+by a closed token window attempted nothing.
 
 ## How the handoff survives import
 
@@ -55,10 +78,16 @@ The author writes `[[IMAGE:<id>]]` markers into the body and a matching
    in listings.
 
 `apply_post_images` then fills each anchor with the real `<figure>`, replaces the
-fallback hero with the authored one, clears `pending_visuals`, and sets
-`images_ready = True`. It is safe to re-run: an anchor is consumed when filled, and
-an anchor whose image is still missing is **left in place** rather than stripped —
-losing it would lose the author's chosen position for that visual.
+fallback hero with the authored one, and sets `images_ready = True`. It is safe to
+re-run: an anchor is consumed when filled, and an anchor whose image is still
+missing is **left in place** rather than stripped — losing it would lose the
+author's chosen position for that visual.
+
+`pending_visuals` is cleared **only when the post actually finished**. It used to be
+cleared unconditionally, which stranded any post that still held anchors: the
+`image_requests` describing them were destroyed, so every later export produced a
+bundle nothing could fill and the post stayed pending forever. Keeping the order on
+an unfinished post is also what carries its attempt counter to the next run.
 
 Two import-side gates know about the deferred shape and do not fire on it:
 

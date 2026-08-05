@@ -8,6 +8,7 @@ from the database, which already holds the whole picture:
 * ``ContentPlan.status`` — reconciled (queued) / generating (claimed) / drafted (done)
 * ``ContentPlan.brief`` — empty means the cluster has not been briefed yet
 * ``feasibility`` — ``human_only`` rows never enter the generation queue
+* ``Post.images_ready`` — false means the post is still owed its visuals
 
 This command collapses that into exactly one instruction and prints it as JSON, so
 a shell driver can branch on ``action`` without parsing prose.
@@ -15,26 +16,38 @@ a shell driver can branch on ``action`` without parsing prose.
     manage.py content_next_action
     {"action": "generate", "cluster": "...", "rows": 11, "reason": "..."}
 
+ONE CLUSTER AT A TIME, ARTICLES THEN IMAGES (Milad, 2026-08-05). The loop walks a
+cycle: produce the highest-demand cluster's articles, wire its internal links,
+draw ITS images, and only then start the next cluster. Before this, images were
+fallback work that ran when the article queue emptied — so drafts piled up
+without visuals for days, and a draft without visuals cannot be published. The
+cycle keeps finished clusters actually finishable, at the cost of nothing: the
+same work happens, in an order that produces publishable clusters instead of a
+growing backlog of half-finished ones.
+
 Actions, in priority order:
 
 ``recover``   a cluster is claimed (``generating``) but nothing is running — a
               previous run died. Import whatever finished, release the rest.
 ``relink``    a cluster finished producing; wire its links across the whole set.
-``brief``     the next cluster has article rows with no brief.
-``generate``  the next cluster is fully briefed and ready to produce.
-``glossary``  no article rows left, but glossary-term rows are queued.
-``images``    no article or term rows left, but posts still need their visuals.
+``brief``     the cluster in flight has article rows with no brief.
+``generate``  the cluster in flight is fully briefed and ready to produce.
+``images``    a produced cluster still has posts without their visuals. Scoped to
+              ONE cluster, and it outranks starting a new one.
 ``idle``      nothing to do.
 
-Cluster ranking: whole-cluster demand (every row, any status), among clusters that
-still hold a reconciled ARTICLE row. Scoring only the leftovers made a cluster's
-rank fall as it was produced, so a half-finished cluster lost its turn to a fresh
-one; and a cluster whose only leftovers are glossary-term rows has nothing the blog
-worklist can produce, so letting it rank first stalled the loop.
+Cluster ranking: the cluster already in flight (it has produced posts and still
+holds producible article rows) always wins — a cluster split across two runs
+degrades exactly the pillar/spoke linking the topic architecture depends on.
+Among clusters that have not started, the highest whole-cluster demand wins.
+
+GLOSSARY IS NOT IN THE CHAIN (Milad, 2026-08-05). Term authoring left the
+autopilot and became a human-triggered pass (``author_glossary_terms
+--from-backlog``). It is still counted and reported in the idle reason so the
+backlog stays visible, but the loop never schedules it.
 
 It is READ-ONLY. It claims nothing, changes nothing, and is safe to call on a
-timer as often as you like. The IMAGES pass is deliberately absent — visuals are
-triggered by a human, never by the loop.
+timer as often as you like.
 """
 from __future__ import annotations
 
@@ -42,7 +55,8 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from keel_content.host import content_plan_model, post_model, topic_cluster_model
+from keel_content.core import visual_queue
+from keel_content.host import content_plan_model, post_model
 
 
 class Command(BaseCommand):
@@ -59,6 +73,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         ContentPlan = content_plan_model()
+        Post = post_model()
 
         # 1. RECOVER — rows stuck in `generating`. Only the driver can tell a dead run
         #    from a live one (it holds the lock), so this needs the explicit flag;
@@ -91,20 +106,8 @@ class Command(BaseCommand):
                 reason=f"cluster '{slug}' is claimed; a run may be in flight",
             )
 
-        # 2. RELINK — a cluster that has just finished producing its articles.
-        #    A cluster is only really finished when its blog->blog links are wired, and
-        #    that pass runs over whatever a single generation batch contained. Since
-        #    runs are now sized to the token window, a cluster is produced across
-        #    several batches, so the in-batch pass can only ever link forward: articles
-        #    written later see their already-produced siblings (spec.cluster_siblings),
-        #    but the earlier ones were finalized and never link back. For a pillar
-        #    produced first — the usual case — that is the wrong direction to lose.
-        #    One whole-cluster pass afterwards repairs it, and this action schedules it.
-        #
-        #    Self-limiting by design: the marker in TopicCluster.brief records the
-        #    article count it was computed at, so a finished cluster is scheduled once,
-        #    and adding a later article to that cluster re-arms it exactly once more.
-        TopicCluster = topic_cluster_model()
+        # Walk the blog rows once: which clusters still hold producible article rows,
+        # and which have already produced posts. Both questions drive every step below.
         blocked, produced, clusters = set(), {}, {}
         for row in (
             ContentPlan.objects.filter(target="blog")
@@ -119,6 +122,23 @@ class Command(BaseCommand):
                 blocked.add(slug)
             if row.produced_post_id:
                 produced[slug] = produced.get(slug, 0) + 1
+
+        # 2. RELINK — a cluster that has just finished producing its articles.
+        #    A cluster is only really finished when its blog->blog links are wired, and
+        #    that pass runs over whatever a single generation batch contained. Since
+        #    runs are now sized to the token window, a cluster is produced across
+        #    several batches, so the in-batch pass can only ever link forward: articles
+        #    written later see their already-produced siblings (spec.cluster_siblings),
+        #    but the earlier ones were finalized and never link back. For a pillar
+        #    produced first — the usual case — that is the wrong direction to lose.
+        #    One whole-cluster pass afterwards repairs it, and this action schedules it.
+        #
+        #    Self-limiting by design: the marker in TopicCluster.brief records the
+        #    article count it was computed at, so a finished cluster is scheduled once,
+        #    and adding a later article to that cluster re-arms it exactly once more.
+        #
+        #    It stays AHEAD of the images pass: relinking rewrites bodies, and doing it
+        #    after the images landed would edit prose around freshly placed figures.
         for slug, n in sorted(produced.items(), key=lambda kv: -kv[1]):
             if slug in blocked or n < 2:
                 continue
@@ -136,7 +156,7 @@ class Command(BaseCommand):
                 ),
             )
 
-        # 3/4. Pick the next cluster. Two rules, both learned the hard way.
+        # 3/4/5. Candidate clusters for article work.
         #
         # A CLUSTER ONLY COUNTS IF IT HAS A RECONCILED *ARTICLE* ROW. The brief and
         # generate actions both work the blog worklist (`export_worklist --target
@@ -144,20 +164,7 @@ class Command(BaseCommand):
         # nothing either action can produce. Ranking such a cluster first used to
         # send the loop into a trap: it would emit `generate`, the session would
         # export zero specs, the queue would not move, and three of those in a row
-        # stop the autopilot. Term rows are still counted and reported, they just
-        # cannot make a cluster "next" on their own.
-        #
-        # DEMAND IS SUMMED OVER THE WHOLE CLUSTER, NOT OVER ITS LEFTOVERS. Scoring
-        # only the reconciled rows meant a cluster's rank FELL as it was produced:
-        # `algorithmic-automated-trading-fundamentals` ranked first at 4054, then a
-        # token block killed the run after 3 of 9 articles, and the remaining 6 --
-        # already briefed -- scored 1056, below a fresh cluster at 2857. The loop
-        # walked away from a half-produced cluster, which is the one thing it must
-        # not do: the batch's overlap audit and cluster-internal-link pass run over
-        # whatever the batch contained, so splitting a cluster across two runs
-        # degrades exactly the pillar/spoke linking the topic architecture depends
-        # on. A whole-cluster score is stable, so a started cluster stays on top
-        # until it has no producible article rows left.
+        # stop the autopilot.
         candidates: dict[str, dict] = {}
         rows = (
             ContentPlan.objects.filter(status="reconciled")
@@ -180,64 +187,115 @@ class Command(BaseCommand):
                     # Term rows are exempt from the brief gate; article rows are not.
                     entry["unbriefed"] += 1
 
-        stranded_terms = sum(
-            e["terms"] for e in candidates.values() if not e["articles"]
-        )
+        queued_terms = ContentPlan.objects.filter(
+            status="reconciled", target="glossary_term"
+        ).count()
         candidates = {k: v for k, v in candidates.items() if v["articles"]}
 
-        if not candidates:
-            # 4/5. THE FALLBACK CHAIN (Milad, 2026-07-31). An open token window with an
-            #      empty article queue used to mean `idle` — the window simply expired
-            #      unused. Two real backlogs exist that no article action touches, so
-            #      they absorb that capacity in his stated order: glossary terms first,
-            #      then images. Both stay noindex-by-default, so this widens what the
-            #      loop PRODUCES, never what it publishes.
-            Post = post_model()
-            terms = ContentPlan.objects.filter(
-                status="reconciled", target="glossary_term"
-            ).count()
-            if terms:
-                return self._emit(
-                    action="glossary",
-                    rows=terms,
-                    reason=(
-                        f"no article rows left to produce; {terms} glossary-term row(s) "
-                        "are queued, and the term pass is the next-best use of an open "
-                        "window"
-                    ),
+        # DEMAND IS SUMMED OVER THE WHOLE CLUSTER, NOT OVER ITS LEFTOVERS. Scoring
+        # only the reconciled rows meant a cluster's rank FELL as it was produced,
+        # so the loop could walk away from a half-produced cluster. A whole-cluster
+        # score is stable.
+        if candidates:
+            totals: dict[str, int] = {}
+            for row in (
+                ContentPlan.objects.filter(topic_cluster__slug__in=list(candidates))
+                .select_related("topic_cluster")
+                .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
+            ):
+                slug = row.topic_cluster.slug
+                totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
+                    row.competitor_traffic or 0
                 )
-            pending_visuals = Post.objects.filter(images_ready=False).count()
-            if pending_visuals:
+            for slug, entry in candidates.items():
+                entry["demand"] = totals.get(slug, 0)
+
+        # 3. FINISH THE CLUSTER IN FLIGHT. A cluster that has already produced posts
+        #    and still holds producible article rows was interrupted mid-way — by a
+        #    closed token window, by a batch limit, by a dead run. It wins outright,
+        #    ahead of its own images and ahead of any fresh cluster, because the
+        #    overlap audit and the cluster-internal-link pass run over whatever one
+        #    batch contained: splitting a cluster costs exactly the linking quality
+        #    the topic architecture depends on.
+        in_flight = {s: v for s, v in candidates.items() if produced.get(s)}
+        if in_flight:
+            slug, info = max(in_flight.items(), key=lambda kv: kv[1]["demand"])
+            return self._article_action(slug, info, in_flight=True)
+
+        # 4. IMAGES FOR A PRODUCED CLUSTER — ahead of starting a new one.
+        #    This is the second half of the cycle. Every clustered post that is still
+        #    owed visuals is grouped by cluster, and one cluster is handed over per
+        #    run. Posts whose visuals could not be produced carry a block marker and
+        #    are not counted here, so one undrawable post can never stall the cycle.
+        pending = visual_queue.pending_posts(Post).only("id")
+        pending_ids = set(pending.values_list("id", flat=True))
+        if pending_ids:
+            by_post = visual_queue.cluster_by_post_id(ContentPlan)
+            per_cluster: dict[str, int] = {}
+            orphans = 0
+            for pid in pending_ids:
+                slug = by_post.get(pid)
+                if slug:
+                    per_cluster[slug] = per_cluster.get(slug, 0) + 1
+                else:
+                    orphans += 1
+            if per_cluster:
+                # Rank the same way article work is ranked, so the cycle stays in one
+                # order: the cluster that mattered most is also imaged first.
+                totals: dict[str, int] = {}
+                for row in (
+                    ContentPlan.objects.filter(topic_cluster__slug__in=list(per_cluster))
+                    .select_related("topic_cluster")
+                    .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
+                ):
+                    slug = row.topic_cluster.slug
+                    totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
+                        row.competitor_traffic or 0
+                    )
+                slug = max(per_cluster, key=lambda s: (totals.get(s, 0), per_cluster[s]))
                 return self._emit(
                     action="images",
-                    rows=pending_visuals,
+                    cluster=slug,
+                    rows=per_cluster[slug],
+                    demand=totals.get(slug, 0),
                     reason=(
-                        f"no article or glossary rows left to produce; {pending_visuals} "
-                        "post(s) still carry images_ready=False"
+                        f"cluster '{slug}' has {per_cluster[slug]} produced draft(s) still "
+                        "without their visuals; its images come before any new cluster is "
+                        "started"
                     ),
                 )
+
+        # 5. START THE NEXT CLUSTER — nothing in flight, no cluster owed images.
+        if candidates:
+            slug, info = max(candidates.items(), key=lambda kv: kv[1]["demand"])
+            return self._article_action(slug, info, in_flight=False)
+
+        # 6. ORPHAN IMAGES — posts that belong to no cluster (hand-written, imported
+        #    from YouTube, produced before the registry). They are real pending work
+        #    but they can never gate a cluster cycle, so they are swept up only once
+        #    the clustered queue is empty.
+        if pending_ids:
             return self._emit(
-                action="idle",
-                reason="nothing left to produce: no article rows, no glossary terms, no pending visuals",
+                action="images",
+                rows=len(pending_ids),
+                reason=(
+                    f"{len(pending_ids)} draft(s) outside any topic cluster are still "
+                    "without their visuals, and no cluster work is left"
+                ),
             )
 
-        # Whole-cluster demand: every row of the cluster in any status, so producing
-        # part of it cannot change where it ranks.
-        totals: dict[str, int] = {}
-        for row in (
-            ContentPlan.objects.filter(topic_cluster__slug__in=list(candidates))
-            .select_related("topic_cluster")
-            .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
-        ):
-            slug = row.topic_cluster.slug
-            totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
-                row.competitor_traffic or 0
-            )
-        for slug, entry in candidates.items():
-            entry["demand"] = totals.get(slug, 0)
+        stuck = visual_queue.blocked_posts(Post).count()
+        return self._emit(
+            action="idle",
+            reason=(
+                "nothing left to produce: no article rows, no pending visuals"
+                + (f"; {queued_terms} glossary term(s) queued for the manual pass" if queued_terms else "")
+                + (f"; {stuck} post(s) blocked on visuals awaiting a human" if stuck else "")
+            ),
+        )
 
-        slug, info = max(candidates.items(), key=lambda kv: kv[1]["demand"])
-
+    def _article_action(self, slug: str, info: dict, *, in_flight: bool):
+        where = "already in flight" if in_flight else f"next by cluster demand ({info['demand']})"
         if info["unbriefed"]:
             return self._emit(
                 action="brief",
@@ -245,19 +303,18 @@ class Command(BaseCommand):
                 rows=info["unbriefed"],
                 demand=info["demand"],
                 reason=(
-                    f"cluster '{slug}' is next by demand ({info['demand']}) and has "
+                    f"cluster '{slug}' is {where} and has "
                     f"{info['unbriefed']} article row(s) with no brief"
                 ),
             )
-
         return self._emit(
             action="generate",
             cluster=slug,
             rows=info["articles"],
             demand=info["demand"],
             reason=(
-                f"cluster '{slug}' is next by cluster demand ({info['demand']}), fully "
-                f"briefed, {info['articles']} article row(s) ready"
+                f"cluster '{slug}' is {where}, fully briefed, "
+                f"{info['articles']} article row(s) ready"
                 + (
                     f" ({info['terms']} glossary-term row(s) also pending, not produced "
                     "by this action)"
