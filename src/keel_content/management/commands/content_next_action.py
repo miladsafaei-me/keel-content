@@ -5,7 +5,8 @@ An unattended driver has no memory: it may be a fresh process minutes after a
 (``resumeFromRunId`` is same-session only), so every decision has to be derivable
 from the database, which already holds the whole picture:
 
-* ``ContentPlan.status`` — reconciled (queued) / generating (claimed) / drafted (done)
+* ``ContentPlan.status`` — planned (needs dedup) / reconciled (queued) /
+  generating (claimed) / drafted (done)
 * ``ContentPlan.brief`` — empty means the cluster has not been briefed yet
 * ``feasibility`` — ``human_only`` rows never enter the generation queue
 * ``Post.images_ready`` — false means the post is still owed its visuals
@@ -29,6 +30,9 @@ Actions, in priority order:
 
 ``recover``   a cluster is claimed (``generating``) but nothing is running — a
               previous run died. Import whatever finished, release the rest.
+``reconcile`` rows sit in ``planned``: they have not cleared the intent-dedup gate,
+              and every action below reads ``reconciled``, so they are invisible
+              to the loop until this runs.
 ``relink``    a cluster finished producing; wire its links across the whole set.
 ``brief``     the cluster in flight has article rows with no brief.
 ``generate``  the cluster in flight is fully briefed and ready to produce.
@@ -104,6 +108,37 @@ class Command(BaseCommand):
                 cluster=slug,
                 rows=claimed.count(),
                 reason=f"cluster '{slug}' is claimed; a run may be in flight",
+            )
+
+        # 2. RECONCILE — `planned` rows have not passed the intent-dedup gate, and
+        #    NOTHING downstream can see them: every later action here reads
+        #    `reconciled`, so a planned row is invisible to the loop and waits
+        #    forever. Before this action existed, ingesting a batch and expecting
+        #    the autopilot to produce it silently did nothing at all — the queue
+        #    reported idle with a hundred rows sitting in it.
+        #
+        #    It goes AHEAD of the production actions on purpose: reconciled rows are
+        #    the input to briefing, generation and the demand ranking, so deduping
+        #    first is what lets a fresh batch compete for the next cluster instead of
+        #    joining a run already half-produced. It stays BEHIND `recover`, which
+        #    releases a dead run's claims and must always come first.
+        #
+        #    Every pending target counts, not just articles: the registry keys terms
+        #    too, and an unkeyed term row is exactly what a duplicate what-is blog
+        #    collides with. If a pass moves nothing, this response repeats verbatim
+        #    and the driver's no-progress guard stops the loop after three ticks —
+        #    which is the correct outcome for a reconcile that cannot converge.
+        pending = ContentPlan.objects.filter(status="planned").count()
+        if pending:
+            return self._emit(
+                action="reconcile",
+                cluster=None,
+                rows=pending,
+                reason=(
+                    f"{pending} row(s) sit in `planned` and have not cleared the "
+                    "intent-dedup gate; nothing downstream can see them until they "
+                    "are reconciled"
+                ),
             )
 
         # Walk the blog rows once: which clusters still hold producible article rows,
