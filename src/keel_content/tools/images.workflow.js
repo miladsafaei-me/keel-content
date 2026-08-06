@@ -4,7 +4,7 @@ export const meta = {
     "Produce the machine-made visuals a post was imported without — its bespoke featured hero and its in-article NB2 photoreal images — one fresh agent per job, all posts flowing concurrently. Split out of generate.workflow.js because nothing in a generation run consumes these: holding every article's chain open for them cost ~123 minutes per cluster while the drafts themselves were already finished.",
   phases: [
     { title: 'Hero', detail: 'one agent per post designs its featured-image SVG' },
-    { title: 'Images', detail: 'one agent per post renders + vision-judges its NB2 photoreal images' },
+    { title: 'Images', detail: 'one agent per post renders its NB2 photoreal images' },
   ],
 }
 
@@ -15,7 +15,7 @@ export const meta = {
 //   args.outDir     : the same dir export_pending_visuals wrote (holds
 //                     <slug>.bundle.json; the agents patch those files in place).
 //   args.repoRoot   : absolute repo root (for the prompt overrides + render script).
-//   args.heroPath / args.imagesPath / args.imageJudgePath / args.renderPath :
+//   args.heroPath / args.imagesPath / args.renderPath :
 //                     optional absolute overrides; each defaults under repoRoot.
 //   args.concurrency: optional cap on concurrent posts (default 6). Unlike the
 //                     generator's write throttle this can run high — these agents do
@@ -36,7 +36,6 @@ if (!outDir || !repoRoot) throw new Error('pass absolute args.outDir and args.re
 
 const heroPath = (A && A.heroPath) || `${repoRoot}/content-pipeline/prompts/author-hero.md`
 const imagesPath = (A && A.imagesPath) || `${repoRoot}/content-pipeline/prompts/author-images.md`
-const imageJudgePath = (A && A.imageJudgePath) || `${repoRoot}/content-pipeline/prompts/image-judge.md`
 const renderPath = (A && A.renderPath) || `${repoRoot}/tools/content_pipeline/render_on_server.sh`
 // 6 -> 10, the runtime's own ceiling of min(16, cores-2). Measured 2026-08-01, a
 // visuals agent costs 16 turns and ~790k tokens of context against 88 turns and
@@ -82,31 +81,7 @@ const buildImagesPrompt = (item) =>
     '5. Return ONLY the compact one-line JSON status described in the brief.',
   ].join('\n')
 
-const buildImageJudgePrompt = (item) =>
-  [
-    'Vision-judge the in-article NB2 images of ONE project blog article. Default to rejecting.',
-    '',
-    `1. Read the judge brief IN FULL: ${imageJudgePath}`,
-    `2. The bundle is at: ${outDir}/${item.content_id}.bundle.json`,
-    "   View each image's rendered .png (sibling of its .webp) with the Read tool.",
-    '3. Patch the "image_gate" verdict into the bundle (leave every other field untouched;',
-    `   SAME path; slug stays "${item.slug}"), then return the structured verdict.`,
-  ].join('\n')
 
-const buildImagesRevisePrompt = (item, verdict) => {
-  const failed = ((verdict && verdict.images) || []).filter((f) => f && f.approved === false)
-  return [
-    'REVISE specific in-article NB2 images of ONE project blog article (judge follow-up).',
-    '',
-    `1. Read the images brief IN FULL: ${imagesPath} (see "Revision mode").`,
-    `2. The bundle is at: ${outDir}/${item.content_id}.bundle.json`,
-    '3. The vision judge FAILED these images — fix exactly these, nothing else:',
-    JSON.stringify(failed, null, 2),
-    `4. Regenerate each ON THE SERVER (bash ${renderPath} ${outDir} nb2_image --bundle @W/${item.content_id}.bundle.json --id <id>),`,
-    '   or adjust its scene_brief/overlay_text in image_requests first, then regenerate; LOOK at the new .png(s).',
-    `5. Write back to the SAME path (slug stays "${item.slug}"); return the one-line JSON status.`,
-  ].join('\n')
-}
 
 const IMAGE_AUTHOR_STATUS_SCHEMA = {
   type: 'object',
@@ -115,27 +90,6 @@ const IMAGE_AUTHOR_STATUS_SCHEMA = {
   required: ['ok'],
 }
 
-const IMAGE_VERDICT_SCHEMA = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
-    slug: { type: 'string' },
-    all_approved: { type: 'boolean' },
-    images: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: true,
-        properties: {
-          id: { type: 'string' },
-          approved: { type: 'boolean' },
-          problems: { type: 'array', items: { type: 'string' } },
-        },
-      },
-    },
-  },
-  required: ['all_approved'],
-}
 
 function makeSemaphore(limit) {
   let active = 0
@@ -193,27 +147,12 @@ const results = await parallel(
         })
         const rendered = (authored && Number(authored.images)) || 0
         if (rendered > 0) {
-          const verdict = await agent(buildImageJudgePrompt(item), {
-            label: `image-judge:${item.slug}`,
-            phase: 'Images',
-            agentType: 'general-purpose',
-            model: M,
-            schema: IMAGE_VERDICT_SCHEMA,
-          })
-          let revised = false
-          if (verdict && verdict.all_approved === false) {
-            await agent(buildImagesRevisePrompt(item, verdict), {
-              label: `image-revise:${item.slug}`,
-              phase: 'Images',
-              agentType: 'general-purpose',
-              model: M,
-            })
-            revised = true
-          }
-          // No re-judge: like the figure gate, the image verdict is advisory — the
-          // draft is reviewed by a human before publishing either way, so a second
-          // vision pass buys bookkeeping rather than a decision.
-          images = { count: rendered, approved: !!(verdict && verdict.all_approved), revised }
+          // VISUAL JUDGING REMOVED (Milad, 2026-08-06) — same call as the figure
+          // gate in generate.workflow.js. The verdict was advisory: nothing
+          // downstream blocked on it, the draft imported either way, and a human
+          // reviews every draft before it can be published. Judging + revising was
+          // the single largest discretionary line in the visuals pass.
+          images = { count: rendered, approved: null, revised: false }
         }
       }
 

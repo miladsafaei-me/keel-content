@@ -55,13 +55,11 @@ const revisePath = (A && A.revisePath) || (repoRoot ? `${repoRoot}/content-pipel
 // together; a Sonnet re-judge records the honest verdict. See quality-gate.md.
 const qualityGatePath = (A && A.qualityGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/quality-gate.md` : '')
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
-const figureJudgePath = (A && A.figureJudgePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
 // The figure VISION-JUDGE (and its rejudge) only VIEW the rendered figure and check it —
 // they don't draw, so they read this compact pass/fail card instead of the full
 // figure-style-guide.md drawing recipe (the figure author + figure-revise still read the
 // full guide, since they draw SVG). Same per-stage-composition cut as the revise card.
-const figureJudgeCardPath = (A && A.figureJudgeCardPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-judge-card.md` : '')
 // Renders (figure_raster / nb2_image) run ON THE SERVER via this wrapper: it
 // stages the bundle dir up, renders inside an isolated memory-capped container,
 // and copies the rendered files back — so the box driving generation needs no
@@ -220,34 +218,7 @@ const buildFiguresPrompt = (spec) =>
     '   present and non-empty (you already read the bundle — just report what you saw).',
   ].join('\n')
 
-const buildFigureJudgePrompt = (spec) =>
-  [
-    'Vision-judge the in-article figures of ONE project blog article. Default to rejecting.',
-    '',
-    `1. Read the judge brief IN FULL: ${figureJudgePath}`,
-    `2. Read the figure judge card IN FULL: ${figureJudgeCardPath} (the compact pass/fail bar — you view + judge, you do not draw).`,
-    `3. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   View each figure\'s rendered .png (sibling of its .webp) with the Read tool.',
-    '4. Patch the "figure_gate" verdict into the bundle (leave every other field',
-    `   untouched; SAME path; slug stays "${spec.slug}"), then return the structured verdict.`,
-  ].join('\n')
 
-const buildFiguresRevisePrompt = (spec, verdict) => {
-  const failed = ((verdict && verdict.figures) || []).filter((f) => f && f.approved === false)
-  return [
-    'REVISE specific in-article figures of ONE project blog article (judge follow-up).',
-    '',
-    `1. Read the figure-authoring brief IN FULL: ${figuresPath} (see "Revision mode").`,
-    `2. Read the figure style guide IN FULL: ${figureStylePath}`,
-    `3. The bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '4. The vision judge FAILED these figures — fix exactly these, nothing else:',
-    JSON.stringify(failed, null, 2),
-    `5. Re-rasterize ON THE SERVER (bash ${renderPath} ${outDir} figure_raster --svg @W/${spec.content_id}.figures/<id>.svg),`,
-    `   LOOK at the new .png(s), update the bundle's`,
-    `   "figures" entries, write back to the SAME path (slug stays "${spec.slug}").`,
-    '6. Return ONLY the compact one-line JSON status described in the brief.',
-  ].join('\n')
-}
 
 // Status the figures author returns. `has_image_requests` powers the NB2 no-op
 // guard: the images stage is skipped entirely when the bundle carries no
@@ -282,40 +253,6 @@ const OVERLAP_RUN_SCHEMA = {
   required: ['pairs', 'gray_band'],
 }
 
-const FIGURE_VERDICT_SCHEMA = {
-  type: 'object',
-  additionalProperties: true,
-  properties: {
-    slug: { type: 'string' },
-    all_approved: { type: 'boolean' },
-    figures: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: true,
-        properties: {
-          id: { type: 'string' },
-          approved: { type: 'boolean' },
-          // Does a REDRAW actually fix this? Measured on the first 11-article batch,
-          // 4 of the 6 recorded problems were density or whitespace notes -- the
-          // categories the judge contract already calls advisory -- yet every one of
-          // them bought a full redraw, because the trigger only ever read
-          // `all_approved`. Worse, `all_approved:false` fired on 6 articles while only
-          // 4 figures were individually rejected, so two redraws ran with no rejected
-          // figure at all. Writing "advisory" in the prompt was not enough; the
-          // decision has to be a field the code reads.
-          blocking: {
-            type: 'boolean',
-            description: 'true ONLY for a defect a redraw can actually fix and a reader would actually trip over: labels colliding or below legible size, truncated or overflowing text, wrong palette or typeface, or a figure whose comprehension_job is not conveyed at all. Density, word count, whitespace, canvas balance and sibling-consistency notes are ADVISORY: report them in problems with blocking=false. If in doubt it is not blocking.',
-          },
-          problems: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['id', 'approved', 'blocking'],
-      },
-    },
-  },
-  required: ['all_approved'],
-}
 
 // image-nb2 stage: renders the per-paragraph photoreal images from the author's
 // Intent-satisfaction gate for one already-written bundle: an ADVERSARIAL reviewer that
@@ -606,37 +543,21 @@ const results = await pipeline(
             model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
             schema: FIGURES_STATUS_SCHEMA,
           })
-          const verdict = await agent(buildFigureJudgePrompt(spec), {
-            label: `figure-judge:${spec.slug}`,
-            phase: 'Figures',
-            agentType: 'general-purpose',
-            model: M_JUDGE,
-            schema: FIGURE_VERDICT_SCHEMA,
-          })
-          // Redraw only when a rejected figure is BLOCKING. `all_approved` alone
-          // over-fires in both directions: it went false for articles whose every
-          // figure was individually approved, and it treated an advisory density
-          // note exactly like an illegible label. A figure that is merely dense
-          // ships with its note surfaced at content_import, which is what the
-          // verdict was always for -- it is advisory there, and content_import
-          // imports the draft either way.
-          const figs = (verdict && Array.isArray(verdict.figures) && verdict.figures) || []
-          const mustRedraw = figs.some((f) => f && f.approved === false && f.blocking === true)
-          if (!verdict || !mustRedraw) {
-            return { approved: !!(verdict && verdict.all_approved), revised: false }
-          }
-          await agent(buildFiguresRevisePrompt(spec, verdict), {
-            label: `figure-revise:${spec.slug}`,
-            phase: 'Figures',
-            agentType: 'general-purpose',
-            model: M_JUDGE,
-          })
-          // No re-judge. The figure verdict is ADVISORY — content_import only prints
-          // "figure gate NOT fully approved, review the draft preview" and imports
-          // anyway — so a second vision pass bought bookkeeping, not a decision, at
-          // ~1.4 min per revised article. The verdict below is therefore the
-          // PRE-revision one; `revised: true` is what says the figure was redrawn.
-          return { approved: false, revised: true }
+          // VISUAL JUDGING REMOVED (Milad, 2026-08-06). Measured over 130 figures:
+          // 97 approved, 33 rejected — but only 8 of those rejections were BLOCKING,
+          // i.e. bought a redraw. The other 25 were density/word-count/palette-shade
+          // notes that changed nothing, since the verdict was advisory at
+          // content_import and the draft imported either way. The pass cost $136 over
+          // two days (~14% of all spend, 318 agents) to catch 8 defects.
+          //
+          // The judge was the ONLY reader of the drawn output, so what is lost is
+          // real and worth naming: clipped text, unlabeled elements, and
+          // trade-semantic colours used as decoration all now reach the draft
+          // unreviewed. That is a deliberate trade — a human reviews every draft
+          // before publishing, and the pipeline never publishes on its own — but the
+          // drawing contract has to carry those rules itself now, not rely on a
+          // reviewer catching violations after the fact.
+          return { approved: null, revised: false }
         },
       ])
       return { ...judged, gated: gate != null, gate, figures }
@@ -652,12 +573,10 @@ const editorialChecked = ok.filter((r) => r && r.editorialGate).length
 const editorialPassed = ok.filter((r) => r && r.editorialGate && r.editorialGate.reads_well).length
 const editorialRevised = ok.filter((r) => r && r.editorialGate && r.editorialGate.revised).length
 const figuresRun = ok.filter((r) => r && r.figures).length
-const figuresApproved = ok.filter((r) => r && r.figures && r.figures.approved).length
-const figuresRevised = ok.filter((r) => r && r.figures && r.figures.revised).length
 log(`done: ${ok.length}/${contents.length} drafts written, ${gatedCount} passed the relevance gate — bundles in ${outDir}`)
 log(`intent gate: ${intentSatisfied}/${intentChecked} satisfied (${intentRevised} revised once); unsatisfied drafts are flagged at content_import`)
 log(`editorial gate: ${editorialPassed}/${editorialChecked} read cleanly (${editorialRevised} revised once — only cohesion <= 2 triggers it); the verdict is advisory`)
-log(`figures: ${figuresApproved}/${figuresRun} articles judge-approved first pass (${figuresRevised} redrawn once, not re-judged); surfaced at content_import`)
+log(`figures: drawn for ${figuresRun} article(s) — not visually judged (the gate was removed 2026-08-06); a human reviews every draft before publishing`)
 log(`hero + NB2 images: NOT produced here — run the standalone images workflow after content_import (posts land with images_ready=False)`)
 
 // Phase 'Cluster links' — blog→blog internal linking, computed ONCE per topic
@@ -909,8 +828,6 @@ return {
   editorialPassed,
   editorialRevised,
   figuresRun,
-  figuresApproved,
-  figuresRevised,
   clustersLinked: linked.length,
   outDir,
   results: ok,
