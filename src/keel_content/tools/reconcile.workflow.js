@@ -22,6 +22,13 @@ export const meta = {
 const M_JUDGE = 'sonnet'
 
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+
+// Per-stage subagent TYPE — see the AGENT_TYPES note in generate.workflow.js. Both
+// stages here classify JSON that is handed to them; neither browses. The role
+// defaults to 'general-purpose', so a caller that passes no map is unchanged. A
+// restricted definition must include StructuredOutput (both stages use a schema).
+const AGENT_TYPES = (typeof A.agentTypes === 'object' && A.agentTypes) || {}
+const AT_GATE = AGENT_TYPES.gate || 'general-purpose'
 const B = (A && A.bucket) || A
 const buckets = (B && Array.isArray(B.buckets) && B.buckets) || []
 const registryKeys = (B && Array.isArray(B.registry_keys) && B.registry_keys) || []
@@ -200,7 +207,7 @@ const perBucket = await pipeline(
         label: `normalize:${bucket.intent_frame}`,
         phase: 'Normalize',
         schema: NORMALIZE_SCHEMA,
-        agentType: 'general-purpose',
+        agentType: AT_GATE,
         model: M_JUDGE,
       })
       for (const a of (res && res.assignments) || []) keyByCid[a.content_id] = a.canonical_key
@@ -217,7 +224,7 @@ const perBucket = await pipeline(
           label: `adjudicate:${bucket.intent_frame}:${g.canonical_key.slice(0, 20)}#${i}`,
           phase: 'Adjudicate',
           schema: ADJUDICATE_SCHEMA,
-          agentType: 'general-purpose',
+          agentType: AT_GATE,
           model: M_JUDGE,
         }).then((v) => v && ({
           canonical_key: g.canonical_key,

@@ -20,6 +20,14 @@ export const meta = {
 //   args.concurrency: optional cap on concurrent posts (default 6). Unlike the
 //                     generator's write throttle this can run high — these agents do
 //                     no web research, they render and look.
+//   args.agentTypes : optional {visual} map of consumer-defined restricted subagent
+//                     types. Both stages draw and look at pixels, so both take the
+//                     `visual` role; it defaults to 'general-purpose', leaving an
+//                     unconfigured caller unchanged. See the AGENT_TYPES note in
+//                     generate.workflow.js — the fixed per-agent floor is ~45% of the
+//                     bill, and a restricted definition measured 31,913 tokens against
+//                     43,577. Any definition used here MUST include StructuredOutput:
+//                     the NB2 stage returns through a schema and would fail silently.
 //
 // Run it between the two halves of the standalone images pass:
 //   manage.py export_pending_visuals --out /tmp/visuals
@@ -48,6 +56,9 @@ const concurrency = Math.max(1, Number(A && A.concurrency) || 10)
 // Both jobs are spec-driven visual production judged by looking at pixels — Sonnet,
 // not Opus. Same call the generator made when these stages lived inside it.
 const M = 'sonnet'
+
+const AGENT_TYPES = (A && typeof A.agentTypes === 'object' && A.agentTypes) || {}
+const AT_VISUAL = AGENT_TYPES.visual || 'general-purpose'
 
 const buildHeroPrompt = (item) =>
   [
@@ -131,7 +142,7 @@ const results = await parallel(
         const heroStatus = await agent(buildHeroPrompt(item), {
           label: `hero:${item.slug}`,
           phase: 'Hero',
-          agentType: 'general-purpose',
+          agentType: AT_VISUAL,
           model: M,
         })
         hero = heroStatus != null
@@ -141,7 +152,7 @@ const results = await parallel(
         const authored = await agent(buildImagesPrompt(item), {
           label: `images:${item.slug}`,
           phase: 'Images',
-          agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
+          agentType: AT_VISUAL, // needs Read (vision) + Bash + Write + StructuredOutput
           model: M,
           schema: IMAGE_AUTHOR_STATUS_SCHEMA,
         })

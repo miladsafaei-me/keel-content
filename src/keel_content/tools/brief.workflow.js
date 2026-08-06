@@ -27,6 +27,8 @@ export const meta = {
 //                      throttled this stage for no reason. The runtime caps concurrent
 //                      agents at min(16, cores-2) regardless.
 //   args.limit       : optional cap for a dry-run (limit: 1 first, inspect, then full).
+//   args.agentTypes  : optional {brief, gate} map of consumer-defined restricted
+//                      subagent types; both default to 'general-purpose'.
 
 // Per-stage model tiering (TOKEN-OPTIMIZATION-PLAN.md). Every stage in the brief
 // workflow is planning / classification / adversarial judgement against a written
@@ -35,6 +37,16 @@ export const meta = {
 const M_JUDGE = 'sonnet'
 
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
+
+// Per-stage subagent TYPE — see the AGENT_TYPES note in generate.workflow.js. The
+// brief WRITER researches the web; the cluster pass, the judge and the overlap
+// precheck only read what is handed to them. Roles default to 'general-purpose', so
+// a caller that passes no map keeps the previous behaviour exactly. Every restricted
+// definition used here must include StructuredOutput — all four stages return
+// through a schema and would fail silently without it.
+const AGENT_TYPES = (typeof A.agentTypes === 'object' && A.agentTypes) || {}
+const at = (role) => AGENT_TYPES[role] || 'general-purpose'
+
 const contents = Array.isArray(A.contents) ? A.contents : []
 const briefPath = A.briefPath || ''
 // The brief-REVISE pass fixes an already-written brief (it has the prior brief + the
@@ -250,7 +262,7 @@ for (const [key, specs] of bySlug) {
     label: `cluster-pass:${key.slice(0, 32)}`,
     phase: 'Cluster pass',
     schema: CLUSTER_SCHEMA,
-    agentType: 'general-purpose',
+    agentType: at('gate'),
     model: M_JUDGE,
   })
   if (res && res.cluster_brief) {
@@ -311,20 +323,20 @@ const judgePrompt = (spec, briefEntry) => [
 const briefOne = async (spec) => {
   let entry = await agent(buildPrompt(spec, null), {
     label: `brief:${(spec.slug || '').slice(0, 40)}`,
-    phase: 'Brief', schema: BRIEF_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
+    phase: 'Brief', schema: BRIEF_SCHEMA, agentType: at('brief'), model: M_JUDGE,
   })
   if (!entry) return null
   if (entry.slug !== spec.slug) entry.slug = spec.slug
   let verdict = await agent(judgePrompt(spec, entry), {
     label: `judge:${(spec.slug || '').slice(0, 40)}`,
-    phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
+    phase: 'Judge', schema: JUDGE_SCHEMA, agentType: at('gate'), model: M_JUDGE,
   })
   let revised = false
   if (verdict && verdict.verdict === 'revise') {
     const feedback = { ...verdict, _previous: entry }
     const second = await agent(buildPrompt(spec, feedback), {
       label: `revise:${(spec.slug || '').slice(0, 40)}`,
-      phase: 'Judge', schema: BRIEF_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
+      phase: 'Judge', schema: BRIEF_SCHEMA, agentType: at('brief'), model: M_JUDGE,
     })
     if (second) {
       if (second.slug !== spec.slug) second.slug = spec.slug
@@ -332,7 +344,7 @@ const briefOne = async (spec) => {
       revised = true
       verdict = await agent(judgePrompt(spec, entry), {
         label: `rejudge:${(spec.slug || '').slice(0, 38)}`,
-        phase: 'Judge', schema: JUDGE_SCHEMA, agentType: 'general-purpose', model: M_JUDGE,
+        phase: 'Judge', schema: JUDGE_SCHEMA, agentType: at('gate'), model: M_JUDGE,
       })
     }
   }
@@ -481,7 +493,7 @@ if (briefs.length >= 2) {
       label: 'brief-overlap',
       phase: 'Overlap precheck',
       schema: OVERLAP_SCHEMA,
-      agentType: 'general-purpose',
+      agentType: at('gate'),
       model: M_JUDGE,
     })
     for (const p of (overlapRes && overlapRes.pairs) || []) {

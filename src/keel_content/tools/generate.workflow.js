@@ -30,6 +30,16 @@ export const meta = {
 //   args.gatePath  : optional absolute path to content-pipeline/prompts/link-relevance-gate.md
 //                    (defaults to <repoRoot>/content-pipeline/prompts/link-relevance-gate.md).
 //   args.limit     : optional cap on how many specs to run this batch.
+//   args.worklistPath : optional absolute path to the exported worklist JSON these
+//                    specs were parsed from. When given, the cluster-level brief is
+//                    NOT inlined into each author prompt — the author reads it from
+//                    that file only if its per-article brief leaves a gap. Measured
+//                    2026-08-06: cluster_brief is ~20k characters, identical for every
+//                    article in the cluster, and each author re-reads its prompt on
+//                    every one of its ~28 requests.
+//   args.agentTypes : optional {author, brief, visual, gate, linkGate, mech} map of
+//                    consumer-defined restricted subagent types — see the note by
+//                    AGENT_TYPES below. Every role defaults to 'general-purpose'.
 
 // args should arrive as a live JSON object, but some callers/harnesses hand it in
 // JSON-encoded as a string — accept either so the runbook is robust across sessions.
@@ -65,6 +75,9 @@ const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/con
 // and copies the rendered files back — so the box driving generation needs no
 // local Linux render tooling (only ssh + scp). @W in the argv -> the staged dir.
 const renderPath = (A && A.renderPath) || (repoRoot ? `${repoRoot}/tools/content_pipeline/render_on_server.sh` : '')
+// Path the specs were exported to. Only used to keep the cluster-level brief OUT of
+// the author prompt while leaving it reachable — see buildPrompt.
+const worklistPath = (A && A.worklistPath) || ''
 // Layer 3 (CANNIBALIZATION-PREVENTION-PLAN.md §3) rides on each spec itself: the
 // reconcile pass writes scope_includes / scope_excludes / canonical_owner onto every
 // row, and the author brief's "One intent, one post" section enforces them as a hard
@@ -99,6 +112,25 @@ const M_AUTHOR = 'opus'
 const M_JUDGE = 'sonnet'
 const M_MECH = 'haiku'
 
+// Per-stage subagent TYPE, the tool-surface twin of the model tiering above. Every
+// agent pays a fixed context floor before it does any work, and pays it again on
+// every request it makes — measured 2026-08-06 at ~45% of the whole bill. Most of
+// that floor is the harness's own tool schemas plus the injected skill listing, and
+// a subagent type whose tool list is restricted to what the stage actually calls
+// drops it: 43,577 tokens under 'general-purpose' against 31,913 under a
+// Read-only definition, same prompt, same model.
+//
+// A consumer supplies its own definitions (`.claude/agents/*.md`) and maps them in
+// as args.agentTypes = {author, brief, visual, gate, linkGate, mech}. Every role
+// falls back to 'general-purpose', so a caller that passes nothing gets exactly the
+// previous behaviour — the package itself stays free of consumer agent names.
+//
+// A restricted definition MUST carry every tool its stage's prompt uses, including
+// StructuredOutput for the schema-bearing stages: a missing tool does not raise,
+// the agent simply cannot do that step, and these stages fail silently.
+const AGENT_TYPES = (A && typeof A.agentTypes === 'object' && A.agentTypes) || {}
+const at = (role) => AGENT_TYPES[role] || 'general-purpose'
+
 phase('Generate')
 log(`generating ${contents.length} blog draft(s) — one fresh, independent agent each`)
 
@@ -115,6 +147,13 @@ const buildPrompt = (spec) => {
   const specForDump = { ...spec }
   delete specForDump.source_transcript
   delete specForDump.source_transcript_path
+  // The cluster-level brief is the same ~20k characters for every article in the
+  // cluster, and the per-article `brief` beneath it already carries what this article
+  // must cover. Inlining it made every author pay it on all ~28 of its requests. When
+  // the caller tells us where the worklist lives, hand over the lookup instead of the
+  // payload — the author reads it only when its own brief leaves a real gap.
+  const clusterBriefOffloaded = !!(worklistPath && specForDump.cluster_brief)
+  if (clusterBriefOffloaded) delete specForDump.cluster_brief
   return [
     'Generate ONE project blog article from the spec below, following the author brief IN FULL.',
     '',
@@ -132,10 +171,9 @@ const buildPrompt = (spec) => {
     '',
     `1. Read the author brief first: ${briefPath}`,
     `2. repoRoot for every other read (BLOG.md, BUSINESS.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
-    '   You do NOT need to load the full CLAUDE.md — the author brief already distills every',
-    '   authoring-relevant rule (compliance, trade-semantic colors, English-only, the internal-link',
-    '   + noindex model). Its git/deploy/podman/CI/registry sections do not apply to authoring; if you',
-    '   must verify a compliance edge case, grep the one relevant CLAUDE.md section rather than reading it whole.',
+    '   Never Read CLAUDE.md whole — the author brief already distills every authoring-relevant rule',
+    '   (compliance, trade-semantic colors, English-only, the internal-link + noindex model), and the',
+    '   repo rules it does not distill do not apply to authoring. Grep the one line you need instead.',
     hasTranscript
       ? '3. THIS IS A YOUTUBE-SOURCED ARTICLE. Your PRIMARY source material is the video transcript ' + (transcriptPath ? `— READ it FIRST from this file: ${transcriptPath}` : 'at the END of this prompt') + '. Write the article FROM it. Read the author brief\'s "YouTube-transcript-sourced articles" section and follow it exactly: re-explain the ideas in ORIGINAL prose and project\' voice (NEVER republish the transcript verbatim or near-verbatim), keep only what is accurate, and DROP the creator\'s self-promotion, competitor products, affiliate pitches, and any unverifiable win-rate / "risk-free" / "guaranteed" claims (reframe such claims skeptically, in our voice). The source video is auto-attached to the post and embedded by the template, so do NOT add a [[VIDEO:...]] embed of the SOURCE video yourself. Any competitor_urls in the spec are only secondary SERP context for what readers expect.'
       : '3. Use your web-research tools to study the competitor URLs and the topic. If WebSearch/WebFetch are not already loaded, load them via ToolSearch first.',
@@ -156,6 +194,15 @@ const buildPrompt = (spec) => {
     '',
     'SPEC:',
     JSON.stringify(specForDump, null, 2),
+    ...(clusterBriefOffloaded
+      ? [
+          '',
+          'CLUSTER BRIEF — deliberately not inlined. Your per-article "brief" above is the',
+          'binding contract and is normally enough. Read the cluster-level brief ONLY if that',
+          'brief leaves you genuinely unable to place this article against its cluster:',
+          `  python3 -c "import json;d=json.load(open('${worklistPath}'));print(json.dumps([c.get('cluster_brief') for c in d['contents'] if c.get('content_id')=='${spec.content_id}'][0],indent=2))"`,
+        ]
+      : []),
     ...(transcript
       ? [
           '',
@@ -437,7 +484,7 @@ const results = await pipeline(
         agent(buildPrompt(spec), {
           label: `write:${spec.slug}`,
           phase: 'Generate',
-          agentType: 'general-purpose', // Tools: * — has WebSearch/WebFetch/Read/Write
+          agentType: at('author'), // author: needs WebSearch/WebFetch + Read/Write/Bash
           model: M_AUTHOR,
         })
       ).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
@@ -454,7 +501,7 @@ const results = await pipeline(
       let verdict = await agent(buildQualityGatePrompt(spec), {
         label: `quality-gate:${spec.slug}`,
         phase: 'Quality gate',
-        agentType: 'general-purpose',
+        agentType: at('gate'), // gate: reads the bundle, no web
         model: M_JUDGE, // judging both dimensions is verification — Sonnet, not Opus
         schema: COMBINED_VERDICT_SCHEMA,
       })
@@ -472,7 +519,7 @@ const results = await pipeline(
         await agent(buildQualityRevisePrompt(spec, verdict), {
           label: `quality-revise:${spec.slug}`,
           phase: 'Quality gate',
-          agentType: 'general-purpose',
+          agentType: at('author'), // author: rewrites body prose
           model: M_AUTHOR, // the substance-add / prose-rewrite stays Opus
         })
         revised = true
@@ -495,7 +542,7 @@ const results = await pipeline(
           const rejudged = await agent(buildQualityGatePrompt(spec), {
             label: `quality-rejudge:${spec.slug}`,
             phase: 'Quality gate',
-            agentType: 'general-purpose',
+            agentType: at('gate'), // gate: re-judge
             model: M_JUDGE,
             schema: COMBINED_VERDICT_SCHEMA,
           })
@@ -530,7 +577,7 @@ const results = await pipeline(
           return agent(buildGatePrompt(spec), {
             label: `gate:${spec.slug}`,
             phase: 'Relevance gate',
-            agentType: 'general-purpose',
+            agentType: at('linkGate'), // linkGate: fetches every proposed source
             model: M_JUDGE,
           })
         },
@@ -539,7 +586,7 @@ const results = await pipeline(
           await agent(buildFiguresPrompt(spec), {
             label: `figures:${spec.slug}`,
             phase: 'Figures',
-            agentType: 'general-purpose', // Tools: * — needs Read (vision) + Bash + Write
+            agentType: at('visual'), // visual: draws + rasterizes + LOOKS at the PNG
             model: M_JUDGE, // spec-driven visual production (test-first Sonnet)
             schema: FIGURES_STATUS_SCHEMA,
           })
@@ -680,7 +727,7 @@ const linkResults = await parallel(
     agent(buildClusterLinkPrompt(cluster, specs), {
       label: `cluster-links:${cluster.slice(0, 28)}`,
       phase: 'Cluster links',
-      agentType: 'general-purpose', // Tools: * — needs Read + Write
+      agentType: at('gate'), // gate: plans blog->blog links across finished bundles
       model: M_JUDGE, // blog→blog anchor planning is judgement, not authoring
     }).then((status) => ({ cluster, articles: specs.length, status }))
   )
@@ -718,7 +765,7 @@ if (auditBundles.length >= 2) {
   ].join('\n'), {
     label: 'overlap-audit',
     phase: 'Overlap audit',
-    agentType: 'general-purpose', // Tools: * — needs Bash
+    agentType: at('mech'), // mech: runs the scorer script
     model: M_MECH,
     effort: 'low',
     schema: OVERLAP_RUN_SCHEMA,
@@ -746,7 +793,7 @@ if (auditBundles.length >= 2) {
     ].join('\n'), {
       label: 'overlap-gray-review',
       phase: 'Overlap audit',
-      agentType: 'general-purpose', // Tools: * — needs Read + Bash + Write
+      agentType: at('gate'), // gate: confirms the gray band
       model: M_JUDGE,
     })
     overlapAudit.grayReviewed = grayBand
@@ -784,7 +831,7 @@ if (glossaryTerms.length && okBundles.length) {
   const gapStatus = await agent(gapPrompt, {
     label: 'glossary-gap',
     phase: 'Glossary gap',
-    agentType: 'general-purpose', // Tools: * — needs Read + Bash + Write
+    agentType: at('gate'), // gate: glossary-gap read
     model: M_JUDGE,
   })
   glossary = { status: gapStatus }
