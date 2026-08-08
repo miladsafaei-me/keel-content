@@ -36,9 +36,21 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.db.models import Case, F, IntegerField, Max, Q, Sum, Value, When
+from django.db.models import (
+    Case,
+    ExpressionWrapper,
+    F,
+    FloatField,
+    IntegerField,
+    Max,
+    Q,
+    Sum,
+    Value,
+    When,
+)
 from django.db.models.functions import Coalesce
 
+from keel_content.core.scope import scope_weight_case
 from keel_content.host import content_plan_model, market_hubs
 
 # Command modules import only when a command runs (apps already populated), so
@@ -226,7 +238,9 @@ class Command(BaseCommand):
             # Claimed rows are now 'generating', so re-select them by pk rather than status.
             qs = ContentPlan.objects.filter(pk__in=claimed_pks)
         else:
-            qs = ContentPlan.objects.filter(status__in=statuses, target__in=targets)
+            qs = ContentPlan.objects.filter(status__in=statuses, target__in=targets).exclude(
+                scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM
+            )
             if source:
                 qs = qs.filter(source_type=source)
             if opts["unkeyed"]:
@@ -292,6 +306,9 @@ class Command(BaseCommand):
                     target=ContentPlan.Target.BLOG,
                 )
                 .exclude(slug__in=batch_slugs)
+                # Never link TO a shelved (>= SCOPE_SHELF_FROM) draft: it may be
+                # unpublished/deleted, so it is not a valid internal-link target.
+                .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
                 .order_by(F("priority").desc(nulls_last=True))
             )
             for sib in sib_qs:
@@ -403,15 +420,20 @@ class Command(BaseCommand):
 
         Cross-source comparator: each row's monthly-demand estimate is its keyword
         volume (keyword route) or, failing that, its competitor traffic (top-pages
-        route) — different estimators of the same quantity, summed per cluster (a
+        route) — different estimators of the same quantity, WEIGHTED by the row's
+        scope-relevance (scope_weight_case: L1 full, L3 discounted, shelved 0) and
+        summed per cluster, so the most on-scope cluster wins at equal raw demand (a
         documented approximation; ``--cluster <slug>`` is the operator's manual
         override). Max row priority breaks ties, then name for determinism.
         """
-        demand = Coalesce("keyword_volume", "competitor_traffic", Value(0))
+        raw_demand = Coalesce("keyword_volume", "competitor_traffic", Value(0))
+        weighted_demand = ExpressionWrapper(
+            raw_demand * scope_weight_case(), output_field=FloatField()
+        )
         return (
             qs.exclude(topic_cluster__isnull=True)
             .values("topic_cluster__slug", "topic_cluster__name")
-            .annotate(demand=Sum(demand), prio=Max("priority"))
+            .annotate(demand=Sum(weighted_demand), prio=Max("priority"))
             .order_by(
                 F("demand").desc(nulls_last=True),
                 F("prio").desc(nulls_last=True),
@@ -438,7 +460,9 @@ class Command(BaseCommand):
         source = (opts["source"] or "").strip()
         explicit = bool(opts["cluster"]) and not opts["next_cluster"]
         while True:
-            base = ContentPlan.objects.filter(status__in=statuses, target__in=targets)
+            base = ContentPlan.objects.filter(status__in=statuses, target__in=targets).exclude(
+                scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM
+            )
             if source:
                 base = base.filter(source_type=source)
             base = self._generation_gates(base, opts["allow_unbriefed"])

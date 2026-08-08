@@ -60,6 +60,7 @@ import json
 from django.core.management.base import BaseCommand
 
 from keel_content.core import visual_queue
+from keel_content.core.scope import scope_weight
 from keel_content.host import content_plan_model, post_model
 
 
@@ -147,6 +148,7 @@ class Command(BaseCommand):
         for row in (
             ContentPlan.objects.filter(target="blog")
             .exclude(feasibility="human_only")
+            .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
             .select_related("topic_cluster")
         ):
             if not row.topic_cluster_id:
@@ -204,6 +206,7 @@ class Command(BaseCommand):
         rows = (
             ContentPlan.objects.filter(status="reconciled")
             .exclude(feasibility="human_only")
+            .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
             .select_related("topic_cluster")
         )
         for row in rows:
@@ -231,19 +234,24 @@ class Command(BaseCommand):
         # only the reconciled rows meant a cluster's rank FELL as it was produced,
         # so the loop could walk away from a half-produced cluster. A whole-cluster
         # score is stable.
+        #
+        # Each row's demand is WEIGHTED by its scope-relevance (scope_weight): an
+        # all-L1 cluster keeps its full demand, an L3 cluster is discounted, and a
+        # shelved (>= SCOPE_SHELF_FROM) row contributes 0 — so the most on-scope
+        # clusters are built first. The weight is scope-stable (it does not change as
+        # a row is produced), so the whole-cluster score stays stable too.
         if candidates:
-            totals: dict[str, int] = {}
+            totals: dict[str, float] = {}
             for row in (
                 ContentPlan.objects.filter(topic_cluster__slug__in=list(candidates))
                 .select_related("topic_cluster")
-                .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
+                .only("keyword_volume", "competitor_traffic", "scope_relevance", "topic_cluster__slug")
             ):
                 slug = row.topic_cluster.slug
-                totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
-                    row.competitor_traffic or 0
-                )
+                raw = (row.keyword_volume or 0) + (row.competitor_traffic or 0)
+                totals[slug] = totals.get(slug, 0) + raw * scope_weight(row.scope_relevance)
             for slug, entry in candidates.items():
-                entry["demand"] = totals.get(slug, 0)
+                entry["demand"] = round(totals.get(slug, 0))
 
         # 3. FINISH THE CLUSTER IN FLIGHT. A cluster that has already produced posts
         #    and still holds producible article rows was interrupted mid-way — by a
