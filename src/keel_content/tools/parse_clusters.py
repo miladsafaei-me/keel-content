@@ -111,6 +111,11 @@ def _read_contents(spec):
                 # intent_clarity (1-3) crafted by the clustering workflow — a winnability
                 # signal that rides into ContentPlan.clarity and the priority composite.
                 "clarity": int(content.get("intent_clarity") or 0) or 0,
+                # scope_relevance (1-5) graded by the clustering workflow's scope pass —
+                # rides into ContentPlan.scope_relevance (queue exclude + priority weight).
+                # None when absent so the host adapter's "only overwrite if present" guard
+                # leaves an ungraded/re-judged row untouched.
+                "scope_relevance": content.get("scope_relevance"),
                 "competitors": 0,
                 "traffic": 0,
                 "keyword_volume": total_volume,
