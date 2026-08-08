@@ -266,6 +266,21 @@ def _read_contents(path):
     return contents
 
 
+def _layer_scope_relevance(workbook_path):
+    """Map the workbook's scope LAYER (carried in the FILE NAME by top_pages.py's
+    ``_LAYER_SUFFIX``: layer 1 -> ``in-scope``, layer 2 -> ``relevant``; Out is dropped
+    upstream and never written) to the 1-5 scope scale, so top-pages rows carry
+    ``ContentPlan.scope_relevance`` like the keyword route: In Scope (L1) -> 1 (core),
+    Relevant (L2) -> 3 (needs an angle). None when the layer can't be read from the name
+    (e.g. a legacy combined file) — leaving the row ungraded for a later re-judge."""
+    name = str(workbook_path or "").lower()
+    if "in-scope" in name or "layer-1" in name or "layer1" in name:
+        return 1
+    if "relevant" in name or "layer-2" in name or "layer2" in name:
+        return 3
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("workbook")
@@ -288,9 +303,15 @@ def main(argv=None):
         contents = sorted(contents, key=lambda c: -c["priority"])[: args.top]
 
     date_prefix = args.date or datetime.date.today().isoformat()
+    layer_scope = _layer_scope_relevance(args.workbook)
     for c in contents:
         c["slug"] = _slugify(c["title"])
         c["content_id"] = f"{date_prefix}-{c['slug']}"[:80]
+        # scope_relevance from the workbook's scope layer -> ContentPlan.scope_relevance
+        # (queue exclude + priority weight), None left absent so the host adapter guard
+        # skips it. The re-judge command can refine any specific row later.
+        if layer_scope is not None:
+            c["scope_relevance"] = layer_scope
 
     worklist = {
         "source": args.workbook,
