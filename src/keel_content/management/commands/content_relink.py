@@ -91,6 +91,14 @@ class Command(BaseCommand):
         tick forever. The marker lives in ``TopicCluster.brief`` (already a JSONField,
         so no migration) and stores the produced-article count it was computed at, so
         adding a later article to the cluster naturally re-arms it exactly once.
+
+        The count MUST be taken over the same row set ``content_next_action``'s relink
+        gate walks, because that gate is the marker's only reader and it compares the
+        two numbers for equality. It skips rows that are ``human_only`` or shelved
+        (``scope_relevance >= SCOPE_SHELF_FROM``); counting them here produced a marker
+        the gate could never match, so a cluster holding even one shelved-but-produced
+        row was rescheduled on every tick forever and re-running ``apply`` only rewrote
+        the same unmatchable number.
         """
         if not cluster or dry_run:
             return
@@ -99,9 +107,12 @@ class Command(BaseCommand):
         if tc is None:
             self.stderr.write(f"cluster {cluster!r} not found — marker not written")
             return
-        produced = ContentPlan.objects.filter(
-            topic_cluster=tc, target="blog", produced_post__isnull=False
-        ).count()
+        produced = (
+            ContentPlan.objects.filter(topic_cluster=tc, target="blog", produced_post__isnull=False)
+            .exclude(feasibility="human_only")
+            .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
+            .count()
+        )
         brief = dict(tc.brief or {})
         brief["relinked"] = {"articles": produced}
         tc.brief = brief
