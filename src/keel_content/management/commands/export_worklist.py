@@ -37,20 +37,18 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.db.models import (
+    Avg,
     Case,
-    ExpressionWrapper,
+    Count,
     F,
     FloatField,
     IntegerField,
-    Max,
     Q,
-    Sum,
     Value,
     When,
 )
 from django.db.models.functions import Coalesce
 
-from keel_content.core.scope import scope_weight_case
 from keel_content.host import content_plan_model, market_hubs
 
 # Command modules import only when a command runs (apps already populated), so
@@ -416,29 +414,22 @@ class Command(BaseCommand):
 
     @staticmethod
     def _next_cluster(qs):
-        """The cluster with the highest AGGREGATED DEMAND still holding queue rows.
+        """The most ON-SCOPE cluster still holding queue rows.
 
-        Cross-source comparator: each row's monthly-demand estimate is its keyword
-        volume (keyword route) or, failing that, its competitor traffic (top-pages
-        route) — different estimators of the same quantity, WEIGHTED by the row's
-        scope-relevance (scope_weight_case: L1 full, L3 discounted, shelved 0) and
-        summed per cluster, so the most on-scope cluster wins at equal raw demand (a
-        documented approximation; ``--cluster <slug>`` is the operator's manual
-        override). Max row priority breaks ties, then name for determinism.
+        Production priority is scope-relevance ONLY (Milad, 2026-08-09) — keyword
+        volume and competitor traffic play NO part. Each cluster is ranked by the
+        mean scope-relevance level of its producible rows (the 3-question model,
+        BUSINESS.md §2; an ungraded NULL row counts as 3); the lowest mean — the most
+        L1/L2 content — wins. Shelf rows are already excluded from ``qs`` upstream.
+        Ties break toward the larger cluster, then name, for determinism.
+        ``--cluster <slug>`` is the operator's manual override.
         """
-        raw_demand = Coalesce("keyword_volume", "competitor_traffic", Value(0))
-        weighted_demand = ExpressionWrapper(
-            raw_demand * scope_weight_case(), output_field=FloatField()
-        )
+        mean_scope = Avg(Coalesce("scope_relevance", Value(3)), output_field=FloatField())
         return (
             qs.exclude(topic_cluster__isnull=True)
             .values("topic_cluster__slug", "topic_cluster__name")
-            .annotate(demand=Sum(weighted_demand), prio=Max("priority"))
-            .order_by(
-                F("demand").desc(nulls_last=True),
-                F("prio").desc(nulls_last=True),
-                "topic_cluster__name",
-            )
+            .annotate(mean_scope=mean_scope, n_rows=Count("pk"))
+            .order_by("mean_scope", F("n_rows").desc(), "topic_cluster__name")
             .first()
         )
 
@@ -477,12 +468,13 @@ class Command(BaseCommand):
                 slug = nxt["topic_cluster__slug"]
             picked = base.select_for_update().filter(topic_cluster__slug=slug)
             if opts["limit"]:
-                # Same ordering the emitted worklist uses, so the claimed rows and the
-                # exported rows are the same rows. Articles before glossary terms: a
-                # term row is not producible by the generation workflow, so letting one
-                # occupy a batch slot would silently shrink the batch.
+                # When a batch is smaller than the cluster, claim its most on-scope
+                # rows first — scope-relevance only, no volume/traffic (Milad,
+                # 2026-08-09). Articles before glossary terms: a term row is not
+                # producible by the generation workflow, so letting one occupy a batch
+                # slot would silently shrink the batch. pk breaks ties deterministically.
                 picked = picked.order_by(
-                    "target", "-keyword_volume", "-competitor_traffic", "pk"
+                    "target", F("scope_relevance").asc(nulls_last=True), "pk"
                 )[: opts["limit"]]
             claimed = list(picked.values_list("pk", flat=True))
             if not claimed:

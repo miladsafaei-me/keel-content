@@ -60,7 +60,7 @@ import json
 from django.core.management.base import BaseCommand
 
 from keel_content.core import visual_queue
-from keel_content.core.scope import scope_weight
+from keel_content.core.scope import cluster_priority, scope_weight
 from keel_content.host import content_plan_model, post_model
 
 
@@ -230,28 +230,25 @@ class Command(BaseCommand):
         ).count()
         candidates = {k: v for k, v in candidates.items() if v["articles"]}
 
-        # DEMAND IS SUMMED OVER THE WHOLE CLUSTER, NOT OVER ITS LEFTOVERS. Scoring
-        # only the reconciled rows meant a cluster's rank FELL as it was produced,
-        # so the loop could walk away from a half-produced cluster. A whole-cluster
-        # score is stable.
-        #
-        # Each row's demand is WEIGHTED by its scope-relevance (scope_weight): an
-        # all-L1 cluster keeps its full demand, an L3 cluster is discounted, and a
-        # shelved (>= SCOPE_SHELF_FROM) row contributes 0 — so the most on-scope
-        # clusters are built first. The weight is scope-stable (it does not change as
-        # a row is produced), so the whole-cluster score stays stable too.
+        # PRIORITY IS SCOPE-RELEVANCE ONLY (Milad, 2026-08-09) — keyword volume and
+        # competitor traffic play NO part in what is built first. Each cluster's
+        # priority is the mean scope-relevance level of its producible rows (the
+        # 3-question model, BUSINESS.md §2); the most on-scope cluster is built first.
+        # It is scored over the WHOLE cluster (not its leftovers) so a cluster's rank
+        # does not drift as it is produced, and a shelved row (>= SCOPE_SHELF_FROM)
+        # counts not at all. See core.scope.cluster_priority — smaller key = higher
+        # priority, so clusters are picked with min(...).
         if candidates:
-            totals: dict[str, float] = {}
+            rows_by_cluster: dict[str, list] = {s: [] for s in candidates}
             for row in (
                 ContentPlan.objects.filter(topic_cluster__slug__in=list(candidates))
                 .select_related("topic_cluster")
-                .only("keyword_volume", "competitor_traffic", "scope_relevance", "topic_cluster__slug")
+                .only("scope_relevance", "topic_cluster__slug")
             ):
-                slug = row.topic_cluster.slug
-                raw = (row.keyword_volume or 0) + (row.competitor_traffic or 0)
-                totals[slug] = totals.get(slug, 0) + raw * scope_weight(row.scope_relevance)
+                rows_by_cluster.setdefault(row.topic_cluster.slug, []).append(row)
             for slug, entry in candidates.items():
-                entry["demand"] = round(totals.get(slug, 0))
+                entry["prio"] = cluster_priority(rows_by_cluster.get(slug, []))
+                entry["mean_level"] = round(entry["prio"][0], 2)
 
         # 3. FINISH THE CLUSTER IN FLIGHT. A cluster that has already produced posts
         #    and still holds producible article rows was interrupted mid-way — by a
@@ -262,7 +259,7 @@ class Command(BaseCommand):
         #    the topic architecture depends on.
         in_flight = {s: v for s, v in candidates.items() if produced.get(s)}
         if in_flight:
-            slug, info = max(in_flight.items(), key=lambda kv: kv[1]["demand"])
+            slug, info = min(in_flight.items(), key=lambda kv: (kv[1]["prio"], kv[0]))
             return self._article_action(slug, info, in_flight=True)
 
         # 4. IMAGES FOR A PRODUCED CLUSTER — ahead of starting a new one.
@@ -283,24 +280,23 @@ class Command(BaseCommand):
                 else:
                     orphans += 1
             if per_cluster:
-                # Rank the same way article work is ranked, so the cycle stays in one
-                # order: the cluster that mattered most is also imaged first.
-                totals: dict[str, int] = {}
+                # Rank the same way article work is ranked — scope priority only, no
+                # demand — so the cycle stays in one order: the cluster that mattered
+                # most is also imaged first. Ties break toward more pending drafts.
+                rows_by_cluster: dict[str, list] = {s: [] for s in per_cluster}
                 for row in (
                     ContentPlan.objects.filter(topic_cluster__slug__in=list(per_cluster))
                     .select_related("topic_cluster")
-                    .only("keyword_volume", "competitor_traffic", "topic_cluster__slug")
+                    .only("scope_relevance", "topic_cluster__slug")
                 ):
-                    slug = row.topic_cluster.slug
-                    totals[slug] = totals.get(slug, 0) + (row.keyword_volume or 0) + (
-                        row.competitor_traffic or 0
-                    )
-                slug = max(per_cluster, key=lambda s: (totals.get(s, 0), per_cluster[s]))
+                    rows_by_cluster.setdefault(row.topic_cluster.slug, []).append(row)
+                prio = {s: cluster_priority(rows_by_cluster.get(s, [])) for s in per_cluster}
+                slug = min(per_cluster, key=lambda s: (prio[s], -per_cluster[s], s))
                 return self._emit(
                     action="images",
                     cluster=slug,
                     rows=per_cluster[slug],
-                    demand=totals.get(slug, 0),
+                    priority=round(prio[slug][0], 2),
                     reason=(
                         f"cluster '{slug}' has {per_cluster[slug]} produced draft(s) still "
                         "without their visuals; its images come before any new cluster is "
@@ -310,7 +306,7 @@ class Command(BaseCommand):
 
         # 5. START THE NEXT CLUSTER — nothing in flight, no cluster owed images.
         if candidates:
-            slug, info = max(candidates.items(), key=lambda kv: kv[1]["demand"])
+            slug, info = min(candidates.items(), key=lambda kv: (kv[1]["prio"], kv[0]))
             return self._article_action(slug, info, in_flight=False)
 
         # 6. ORPHAN IMAGES — posts that belong to no cluster (hand-written, imported
@@ -338,13 +334,13 @@ class Command(BaseCommand):
         )
 
     def _article_action(self, slug: str, info: dict, *, in_flight: bool):
-        where = "already in flight" if in_flight else f"next by cluster demand ({info['demand']})"
+        where = "already in flight" if in_flight else f"next by scope priority (mean L{info['mean_level']})"
         if info["unbriefed"]:
             return self._emit(
                 action="brief",
                 cluster=slug,
                 rows=info["unbriefed"],
-                demand=info["demand"],
+                priority=info["mean_level"],
                 reason=(
                     f"cluster '{slug}' is {where} and has "
                     f"{info['unbriefed']} article row(s) with no brief"
@@ -354,7 +350,7 @@ class Command(BaseCommand):
             action="generate",
             cluster=slug,
             rows=info["articles"],
-            demand=info["demand"],
+            priority=info["mean_level"],
             reason=(
                 f"cluster '{slug}' is {where}, fully briefed, "
                 f"{info['articles']} article row(s) ready"
