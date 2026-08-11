@@ -168,17 +168,30 @@ def slot_due(Post, quota, now, grace_minutes=DEFAULT_GRACE_MINUTES):
 
 
 def publish_post(post, now=None):
-    """Promote one draft to live and stamp ``published_at`` if unset."""
+    """Promote one draft to live and stamp ``published_at`` if unset.
+
+    On first publish, ``updated_at`` must land EXACTLY on ``published_at`` — the host
+    shows ``updated_at`` as "Last Updated" and both dates go into the page's schema, so
+    a go-live should not read as an edit that happened a moment later. ``save()``'s
+    ``auto_now`` handling calls its own fresh ``timezone.now()`` regardless of what is
+    assigned to the field, so it cannot be trusted to match ``published_at`` to the
+    microsecond; force it back afterward with a plain ``update()`` (no signals, no
+    second ``pre_save`` pass) rather than a second ``save()``.
+    """
     now = now or timezone.now()
     Post = type(post)
     post.status = Post.Status.PUBLISHED
     fields = ["status"]
-    if not post.published_at:
+    first_publish = not post.published_at
+    if first_publish:
         post.published_at = now
         fields.append("published_at")
     # updated_at is auto_now; include it so the sitemap lastmod moves.
     fields.append("updated_at")
     post.save(update_fields=fields)
+    if first_publish:
+        Post.objects.filter(pk=post.pk).update(updated_at=post.published_at)
+        post.updated_at = post.published_at
     return post
 
 
