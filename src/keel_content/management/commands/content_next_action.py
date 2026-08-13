@@ -214,11 +214,25 @@ class Command(BaseCommand):
                 continue
             slug = row.topic_cluster.slug
             entry = candidates.setdefault(
-                slug, {"demand": 0, "rows": 0, "unbriefed": 0, "terms": 0, "articles": 0}
+                slug,
+                {"demand": 0, "rows": 0, "unbriefed": 0, "terms": 0, "news": 0, "articles": 0},
             )
             entry["rows"] += 1
             if row.target == "glossary_term":
                 entry["terms"] += 1
+            elif row.target != "blog":
+                # THE SAME TRAP AS THE TERM ROWS, ONE TARGET FURTHER ALONG. A `news`
+                # row is a real article a human can produce, but brief and generate
+                # both run `export_worklist --target blog`, so this loop can never
+                # reach it. Counting it as producible cost 9.5 hours on 2026-08-13:
+                # cluster alpari-legitimacy-brand-regulation held exactly one
+                # reconciled news row (its blog rows were all scope-shelved), every
+                # tick emitted `generate`, the export wrote no file, the session
+                # exited 0 having done nothing, and the third no-progress run stopped
+                # the autopilot — which the auto-retry could not clear either, because
+                # it re-picked the same cluster and failed the same three times. Only
+                # rows this loop can actually produce may make a cluster a candidate.
+                entry["news"] += 1
             else:
                 entry["articles"] += 1
                 if not row.brief:
@@ -228,6 +242,7 @@ class Command(BaseCommand):
         queued_terms = ContentPlan.objects.filter(
             status="reconciled", target="glossary_term"
         ).count()
+        queued_news = ContentPlan.objects.filter(status="reconciled", target="news").count()
         candidates = {k: v for k, v in candidates.items() if v["articles"]}
 
         # PRIORITY IS SCOPE-RELEVANCE ONLY (Milad, 2026-08-09) — keyword volume and
@@ -329,6 +344,7 @@ class Command(BaseCommand):
             reason=(
                 "nothing left to produce: no article rows, no pending visuals"
                 + (f"; {queued_terms} glossary term(s) queued for the manual pass" if queued_terms else "")
+                + (f"; {queued_news} news row(s) queued for the manual pass" if queued_news else "")
                 + (f"; {stuck} post(s) blocked on visuals awaiting a human" if stuck else "")
             ),
         )
@@ -346,6 +362,14 @@ class Command(BaseCommand):
                     f"{info['unbriefed']} article row(s) with no brief"
                 ),
             )
+        # Rows this loop cannot produce stay visible in the reason rather than being
+        # silently dropped, so a backlog the humans own never disappears from view
+        # just because the scheduler stopped counting it.
+        also = []
+        if info["terms"]:
+            also.append(f"{info['terms']} glossary-term row(s)")
+        if info.get("news"):
+            also.append(f"{info['news']} news row(s)")
         return self._emit(
             action="generate",
             cluster=slug,
@@ -355,9 +379,8 @@ class Command(BaseCommand):
                 f"cluster '{slug}' is {where}, fully briefed, "
                 f"{info['articles']} article row(s) ready"
                 + (
-                    f" ({info['terms']} glossary-term row(s) also pending, not produced "
-                    "by this action)"
-                    if info["terms"]
+                    f" ({' and '.join(also)} also pending, not produced by this action)"
+                    if also
                     else ""
                 )
             ),
