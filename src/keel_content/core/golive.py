@@ -3,13 +3,14 @@
 The generation loop (``content_next_action``) deliberately stops at a noindex,
 gate-checked draft; promoting a draft to PUBLISHED was left to a human. This module
 is the other half a host can opt into: a scheduler that promotes ready drafts to
-live on a daily quota, draining ONE cluster at a time by demand so the site fills
-in coherent topic clusters instead of scattered posts.
+live on a daily quota, draining ONE cluster at a time so the site fills in coherent
+topic clusters instead of scattered posts.
 
 Like the rest of ``core/`` it is business-blind: it resolves the host's Post /
 ContentPlan / TopicCluster models through :mod:`keel_content.host` and ranks with
 the shared :mod:`keel_content.core.scope` policy, so publish order follows the SAME
-``demand x scope_relevance`` formula the generation loop builds by.
+rule the generation loop builds by — ``scope.cluster_priority``, scope relevance
+and nothing else.
 
 Readiness — a draft is publishable when it is::
 
@@ -21,11 +22,21 @@ Readiness — a draft is publishable when it is::
 fallback and any in-article image is still a placeholder block, so the post is not
 publishable no matter what else is true.
 
-Order — the highest-demand cluster that still holds ready drafts wins (the same
-``sum(keyword_volume + competitor_traffic) x scope_weight`` per cluster used by the
-generation brain), and within it the highest ``ContentPlan.priority``. Draining the
-top cluster fully before moving on is what makes "a day's posts come from one
-cluster, spilling into the next only when the cluster runs short" fall out for free.
+Order — the most ON-SCOPE cluster that still holds ready drafts wins, ranked by
+``scope.cluster_priority`` (mean scope-relevance level, larger cluster breaking an
+exact tie), and within it the highest ``ContentPlan.priority``. Draining the top
+cluster fully before moving on is what makes "a day's posts come from one cluster,
+spilling into the next only when the cluster runs short" fall out for free.
+
+KEYWORD VOLUME AND COMPETITOR TRAFFIC PLAY NO PART (Milad, 2026-08-09, extended to
+publishing 2026-08-14). Ranking here used to be
+``sum(keyword_volume + competitor_traffic) x scope_weight`` and claimed in its own
+docstring to mirror the generation brain — but the brain dropped both demand signals
+on 2026-08-09 and this half was never changed, so for five days the two ends of the
+pipeline built and published in genuinely different orders. Volume dominated the
+product, so a high-volume L2 cluster outranked an L1 one and the most on-scope work
+was produced first and published last. One rule, imported from one module, is the
+only thing that keeps them from drifting again.
 
 Cadence — a daily quota ``Q`` spread across 24h: publish one when fewer than ``Q``
 have gone out today AND at least ``24h / Q`` has passed since the last publish. The
@@ -47,7 +58,7 @@ from datetime import timedelta
 from django.db.models import F
 from django.utils import timezone
 
-from keel_content.core.scope import scope_weight
+from keel_content.core.scope import cluster_priority
 from keel_content.core.visual_queue import BLOCKED_KEY
 from keel_content.host import content_plan_model, post_model
 
@@ -81,24 +92,24 @@ def ready_posts_qs(Post=None):
     )
 
 
-def _cluster_demand(cluster_slugs) -> dict:
-    """``sum((keyword_volume + competitor_traffic) x scope_weight)`` per cluster.
+def _cluster_ranks(cluster_slugs) -> dict:
+    """``scope.cluster_priority`` per cluster — SMALLER IS HIGHER PRIORITY.
 
-    Mirrors ``content_next_action``'s in-loop scorer exactly (both demand signals
-    summed, scope-weighted), so publish order matches production order.
+    The identical call the generation brain makes, over the identical row set: the
+    WHOLE cluster, not just the rows still to be published, so a cluster's rank does
+    not drift as it drains. Shelved rows weigh nothing and ungraded rows count as
+    L3, exactly as they do in production.
     """
     ContentPlan = content_plan_model()
-    totals: dict[str, float] = {}
+    rows_by_cluster: dict[str, list] = {s: [] for s in cluster_slugs}
     rows = (
         ContentPlan.objects.filter(topic_cluster__slug__in=list(cluster_slugs))
         .select_related("topic_cluster")
-        .only("keyword_volume", "competitor_traffic", "scope_relevance", "topic_cluster__slug")
+        .only("scope_relevance", "topic_cluster__slug")
     )
     for row in rows:
-        slug = row.topic_cluster.slug
-        raw = (row.keyword_volume or 0) + (row.competitor_traffic or 0)
-        totals[slug] = totals.get(slug, 0.0) + raw * scope_weight(row.scope_relevance)
-    return totals
+        rows_by_cluster.setdefault(row.topic_cluster.slug, []).append(row)
+    return {s: cluster_priority(rows_by_cluster.get(s, [])) for s in cluster_slugs}
 
 
 def _by_priority(qs):
@@ -109,9 +120,10 @@ def _by_priority(qs):
 def select_next_post():
     """The single highest-priority ready draft to publish next.
 
-    Returns ``(post, cluster_slug, cluster_demand)`` or ``(None, None, 0.0)`` when
-    nothing is ready. Picks the top-demand cluster that still has a ready draft,
-    then that cluster's top-priority draft; clusterless drafts fall to the end.
+    Returns ``(post, cluster_slug, mean_scope_level)`` or ``(None, None, None)``
+    when nothing is ready. Picks the most on-scope cluster that still has a ready
+    draft, then that cluster's top-priority draft; clusterless drafts fall to the
+    end, since a post with no cluster has no scope rank to compare.
     """
     Post = post_model()
     ready = ready_posts_qs(Post).select_related("content_plan", "topic_cluster")
@@ -120,16 +132,19 @@ def select_next_post():
         ready.exclude(topic_cluster__isnull=True).values_list("topic_cluster__slug", flat=True)
     )
     if cluster_slugs:
-        demand = _cluster_demand(cluster_slugs)
-        for slug in sorted(cluster_slugs, key=lambda s: demand.get(s, 0.0), reverse=True):
+        ranks = _cluster_ranks(cluster_slugs)
+        # min-first: cluster_priority returns (mean level, -row count) and smaller
+        # means more on-scope. The slug is the last tiebreak so the order is total
+        # and two ticks never disagree about what comes next.
+        for slug in sorted(cluster_slugs, key=lambda s: (ranks[s], s)):
             post = _by_priority(ready.filter(topic_cluster__slug=slug)).first()
             if post is not None:
-                return post, slug, demand.get(slug, 0.0)
+                return post, slug, round(ranks[slug][0], 2)
 
     orphan = _by_priority(ready.filter(topic_cluster__isnull=True)).first()
     if orphan is not None:
-        return orphan, None, 0.0
-    return None, None, 0.0
+        return orphan, None, None
+    return None, None, None
 
 
 def published_today_count(Post, now) -> int:
@@ -215,7 +230,7 @@ def run_tick(quota=DEFAULT_QUOTA, now=None, dry_run=False, force=False, grace_mi
             result["reason"] = reason
             return result
 
-    post, cluster_slug, demand = select_next_post()
+    post, cluster_slug, mean_level = select_next_post()
     if post is None:
         result["reason"] = "no ready-to-publish drafts"
         result["ready_total"] = ready_posts_qs(Post).count()
@@ -226,7 +241,7 @@ def run_tick(quota=DEFAULT_QUOTA, now=None, dry_run=False, force=False, grace_mi
         "slug": post.slug,
         "title": post.title,
         "cluster": cluster_slug,
-        "cluster_demand": round(demand),
+        "cluster_scope_level": mean_level,
     }
     if dry_run:
         result["action"] = "would_publish"
