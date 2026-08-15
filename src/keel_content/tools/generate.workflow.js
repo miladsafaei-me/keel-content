@@ -3,8 +3,9 @@ export const meta = {
   description:
     'Generate one project blog draft per worklist spec — one fresh agent each, each writing a self-contained bundle JSON for content_import. Then an independent link-relevance gate reviews every draft\'s external sources, and a cluster-linking pass wires blog→blog internal links within each topic cluster once all its articles exist. Independent contexts (no chaining) so every article gets a fresh strategist read.',
   phases: [
-    { title: 'Generate', detail: 'one fresh agent per content spec' },
-    { title: 'Quality gate', detail: 'ONE reviewer scores both intent-satisfaction (coverage/scope) AND editorial quality (flow/cohesion/voice/seams) in a single pass on a recalibrated real-problems-only bar; a single revision fixes coverage gaps + smooths seams together on fail — runs before links + visuals are judged/drawn against the FINAL body' },
+    { title: 'Generate', detail: 'one fresh agent per content spec writes PURE PROSE — no components, no figures, no images (a later stage adds them); decoupling the writing from the component catalog removes the bias where prose bends to fit available components' },
+    { title: 'Visual plan', detail: "a Sonnet planner reads the FINAL prose + the brief's format-agnostic visual_obligations/visual_gap + carried SERP evidence, derives the needed visuals CATALOG-BLIND then maps each to the best vehicle (component/figure/NB2) to beat competitors on intent satisfaction, seats them, and flags paragraphs to rework; an Opus prose-rework runs only when a paragraph needs it" },
+    { title: 'Quality gate', detail: 'ONE reviewer scores both intent-satisfaction (coverage/scope) AND editorial quality (flow/cohesion/voice/visual-integration/seams) in a single pass on a recalibrated real-problems-only bar — now over the body WITH its visuals in place, so it is the end-to-end coherence judge; a single revision fixes coverage gaps + smooths seams together on fail' },
     { title: 'Relevance gate', detail: 'independent reviewer fetches + judges each draft\'s external links AGAINST THE FINAL body (after any quality-gate revision)' },
     { title: 'Figures', detail: "a separate agent draws each article's in-article figures (SVG -> WebP) from the author's figure_requests after the body is FINAL; a vision judge gates them, one revision on fail. Runs CONCURRENTLY with the relevance gate" },
     { title: 'Cluster links', detail: 'one planner per topic cluster wires blog→blog links across its finished articles' },
@@ -64,6 +65,15 @@ const revisePath = (A && A.revisePath) || (repoRoot ? `${repoRoot}/content-pipel
 // "real problems only" bar; a single Opus revise fixes coverage gaps + smooths seams
 // together; a Sonnet re-judge records the honest verdict. See quality-gate.md.
 const qualityGatePath = (A && A.qualityGatePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/quality-gate.md` : '')
+// The post-prose VISUAL stage. A Sonnet planner reads the FINAL body + the brief's
+// format-agnostic visual_obligations/visual_gap + carried SERP evidence, decides the
+// needed visuals CATALOG-BLIND, maps each to the best vehicle (component/figure/NB2),
+// seats them, and flags the paragraphs that must be reworked around them. An Opus
+// prose-rework then reseats only those flagged paragraphs — run ONLY when the plan
+// reports rewrites_needed > 0. This is the decoupling that removes the component-bias:
+// the writer never sees the catalog, and visuals are chosen against the finished text.
+const visualPlanPath = (A && A.visualPlanPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/visual-plan.md` : '')
+const visualRewritePath = (A && A.visualRewritePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/visual-rewrite.md` : '')
 const figuresPath = (A && A.figuresPath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/author-figures.md` : '')
 const figureStylePath = (A && A.figureStylePath) || (repoRoot ? `${repoRoot}/content-pipeline/prompts/figure-style-guide.md` : '')
 // The figure VISION-JUDGE (and its rejudge) only VIEW the rendered figure and check it —
@@ -103,10 +113,13 @@ const contents = A.limit ? all.slice(0, A.limit) : all
 // model: EXPLICITLY — never rely on session-model inheritance — so per-article
 // usage cost drops without touching quality. Re-tiering a whole class of stage is
 // a one-line change here.
-//   M_AUTHOR — substance authoring + the merged quality gate's revise (generative quality)
+//   M_AUTHOR — substance authoring + the merged quality gate's revise + the visual-prose
+//              rework (all generative prose quality; the rework reseats paragraphs around
+//              placed visuals, so it stays Opus)
 //   M_JUDGE  — verification / judgement / classification / spec-driven visuals (incl. the
 //              quality-gate JUDGE + re-judge: scoring prose flow is verification, not
-//              authoring, so it runs on Sonnet; only the revise it triggers stays Opus)
+//              authoring, so it runs on Sonnet; AND the visual-plan: selecting + placing
+//              visuals against finished prose is spec-driven judgement, not authoring)
 //   M_MECH   — pure script-runner agents (run a command, return its output)
 const M_AUTHOR = 'opus'
 const M_JUDGE = 'sonnet'
@@ -167,17 +180,17 @@ const buildPrompt = (spec) => {
     // a later window. The write stage is Opus and 44% of the batch's tokens; re-paying
     // for it because a Sonnet figure agent did not get to run is the single most
     // wasteful thing this pipeline does.
-    `0. RESUME CHECK, before anything else. If ${outDir}/${spec.content_id}.bundle.json already exists AND carries a non-empty body_markdown AND an intent_gate with satisfied=true, then a previous run already wrote this article and only its downstream stages were cut short. Do NOT rewrite it and do NOT re-read the brief: return {"slug": "${spec.slug}", "bundle_path": "${outDir}/${spec.content_id}.bundle.json", "status": "reused"} immediately. The later stages run again over the existing bundle, which is exactly what it needs. Anything less than all three conditions means write the article normally.`,
+    `0. RESUME CHECK, before anything else. If ${outDir}/${spec.content_id}.bundle.json already exists AND carries a non-empty body_markdown, then a previous run already wrote this article (a bundle on disk is complete by construction — the author writes it only at the end). Do NOT rewrite it and do NOT re-read the brief: return {"slug": "${spec.slug}", "bundle_path": "${outDir}/${spec.content_id}.bundle.json", "status": "reused"} immediately. The later stages (visual plan, quality gate, post-body) run again over the existing bundle, which is exactly what it needs. An empty or missing body means write the article normally.`,
     '',
     `1. Read the author brief first: ${briefPath}`,
-    `2. repoRoot for every other read (BLOG.md, BUSINESS.md, and the component catalog at content-pipeline/components/CATALOG.md): ${repoRoot}.`,
+    `2. repoRoot for every other read (BLOG.md, BUSINESS.md): ${repoRoot}. Do NOT read the component catalog — you write prose only; a separate visual stage selects and places every visual.`,
     '   Never Read CLAUDE.md whole — the author brief already distills every authoring-relevant rule',
     '   (compliance, trade-semantic colors, English-only, the internal-link + noindex model), and the',
     '   repo rules it does not distill do not apply to authoring. Grep the one line you need instead.',
     hasTranscript
       ? '3. THIS IS A YOUTUBE-SOURCED ARTICLE. Your PRIMARY source material is the video transcript ' + (transcriptPath ? `— READ it FIRST from this file: ${transcriptPath}` : 'at the END of this prompt') + '. Write the article FROM it. Read the author brief\'s "YouTube-transcript-sourced articles" section and follow it exactly: re-explain the ideas in ORIGINAL prose and project\' voice (NEVER republish the transcript verbatim or near-verbatim), keep only what is accurate, and DROP the creator\'s self-promotion, competitor products, affiliate pitches, and any unverifiable win-rate / "risk-free" / "guaranteed" claims (reframe such claims skeptically, in our voice). The source video is auto-attached to the post and embedded by the template, so do NOT add a [[VIDEO:...]] embed of the SOURCE video yourself. Any competitor_urls in the spec are only secondary SERP context for what readers expect.'
       : '3. Use your web-research tools to study the competitor URLs and the topic. If WebSearch/WebFetch are not already loaded, load them via ToolSearch first.',
-    '4. Do the FULL job for THIS spec only, in your own fresh context: intent-first SERP research (discard off-intent competitor URLs into the report), strategist outline, a comprehensive draft (length follows the intent — NO word-count target, never padding), code-in-page visuals DERIVED from this article\'s intent (no fixed count, no one-of-each quota; legible in BOTH light and dark), self-critique, then engagement-formatted final assembly. Do NOT author the hero — a separate stage designs it after your draft exists.',
+    '4. Do the FULL job for THIS spec only, in your own fresh context: intent-first SERP research (discard off-intent competitor URLs into the report), strategist outline, a comprehensive PROSE draft (length follows the intent — NO word-count target, never padding), self-critique, then engagement-formatted final assembly. Write PROSE ONLY: NO cp-component blocks, NO [[FIGURE]]/[[IMAGE]] markers, do NOT reason about visual formats — a separate visual stage reads your finished article and adds every in-page visual afterwards (this decoupling keeps the writing from bending to fit available components). You DO still source real YouTube videos + human-asset requests (that is web research, which is yours) and place their [[VIDEO]]/[[ASSET]] markers. Do NOT author the hero either — a separate stage designs it.',
     `5. Write the bundle JSON to EXACTLY: ${outDir}/${spec.content_id}.bundle.json`,
     `   - slug MUST be "${spec.slug}" verbatim (stable identity).`,
     '   - Carry the facets through from the spec; extend facets.glossary_terms with any glossary terms you actually linked.',
@@ -213,6 +226,91 @@ const buildPrompt = (spec) => {
         ]
       : []),
   ].join('\n')
+}
+
+// The brief's VISUAL intent + carried SERP evidence, handed to the visual planner so it
+// NEVER re-fetches the SERP: the strategist already crawled it once at brief time. Only
+// the visual-relevant slices ride along (jobs, the gap, and each evidence page's element
+// notes) — the full brief is not needed to choose visuals against the finished prose.
+const briefVisual = (spec) => {
+  const b = (spec && spec.brief) || {}
+  return {
+    intent_frame: spec.intent_frame || '',
+    lead_visual_archetype: spec.lead_visual_archetype || '',
+    visual_obligations: b.visual_obligations || [],
+    visual_gap: b.visual_gap || '',
+    evidence: (b.evidence || []).map((e) => ({ url: e.url, type: e.type, structure_notes: e.structure_notes })),
+  }
+}
+
+// Visual-PLAN for one already-written (prose-only) bundle: a Sonnet planner reads the FINAL
+// body, decides the needed visuals CATALOG-BLIND (against the brief's format-agnostic
+// visual_obligations/visual_gap + the carried competitor-visual evidence), maps each to the
+// best vehicle, seats the blocks/markers, and writes a visual_rewrite_plan of paragraphs to
+// rework. It does NOT rewrite body prose (the conditional Opus rework does). This runs BEFORE
+// the quality gate so the gate judges the article WITH its visuals — the end-to-end coherence
+// pass. No indexableUrls are handed here on purpose: components carry no internal links (import
+// drops any off-allowlist link), so the planner stays lean and the writer's body links stand.
+const buildVisualPlanPrompt = (spec) =>
+  [
+    'Plan and place every in-page visual for ONE already-written project blog article.',
+    'The body is FINAL prose — the author wrote it with no visuals on purpose. Add exactly the',
+    'visuals this reader needs and seat them, aiming to satisfy the intent BETTER THAN EVERY',
+    'competitor (the carried evidence is table-stakes + the gap, never a template to copy).',
+    '',
+    `1. Read the visual-plan contract IN FULL: ${visualPlanPath}`,
+    `2. repoRoot for every other read (brief-core-constraints.md, brief-visual-system.md, and the`,
+    `   component catalog content-pipeline/components/CATALOG.md + the shortlisted manifest.json): ${repoRoot}.`,
+    `3. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
+    '   Read its FINAL body_markdown — plan against THAT. Decide the needed visuals CATALOG-BLIND',
+    '   first (need + reader job per section, reconciled with visual_obligations + visual_gap),',
+    '   THEN open the catalog to map each need to the ONE best vehicle. Cut every slot-filler.',
+    '4. Patch the bundle per the contract: body_markdown with cp-component blocks + [[FIGURE]]/',
+    '   [[IMAGE]] markers inserted, figure_requests, image_requests, visual_rewrite_plan,',
+    `   visuals_planned:true, generation_report visual_count/visual_types. Leave every other`,
+    `   field untouched; write it back to the SAME path; slug stays "${spec.slug}".`,
+    '5. Return ONLY the compact one-line JSON status the contract specifies (MUST include',
+    '   rewrites_needed = the length of visual_rewrite_plan).',
+    '',
+    "THE BRIEF'S VISUAL INTENT + CARRIED SERP EVIDENCE (reuse this — do NOT re-fetch the SERP):",
+    JSON.stringify(briefVisual(spec), null, 2),
+  ].join('\n')
+
+// Conditional Opus prose-rework: reseats ONLY the paragraphs the plan flagged in
+// visual_rewrite_plan so each set up + pays off its visual. Run ONLY when the plan reports
+// rewrites_needed > 0 — most articles the planner seats cleanly need no rework, keeping Opus
+// spend where it earns its place. Surgical: no new sections/claims/stats/links, no visual
+// re-selection.
+const buildVisualRewritePrompt = (spec) =>
+  [
+    'Rework the prose around the visuals a visual-plan stage just placed in ONE blog article.',
+    '',
+    `1. Read the visual-rewrite card IN FULL: ${visualRewritePath} — it points you to`,
+    `   brief-core-constraints.md; read that too. repoRoot: ${repoRoot}.`,
+    `2. The bundle is at: ${outDir}/${spec.content_id}.bundle.json — read it. body_markdown has`,
+    '   the visuals in place; visual_rewrite_plan is your fix-list (anchor, visual_id, problem, goal).',
+    '3. Rework ONLY the flagged paragraphs so each seats its visual cleanly (set up + pay off, no',
+    '   duplication). Match the existing voice exactly; add no sections, claims, stats, or links;',
+    '   do NOT move/re-spec any visual; do NOT touch internal_links/external_sources.',
+    `4. Write the bundle back to the SAME path; set visual_rewrite_plan to []; slug stays "${spec.slug}".`,
+    '5. Return ONLY a compact one-line JSON status: {"slug":"...","reworked":N}.',
+  ].join('\n')
+
+// Status the visual planner returns. rewrites_needed drives the conditional Opus rework;
+// it is NOT required (a resume no-op returns {slug, reused:true} with no count), so the
+// stage treats a missing/NaN value as 0 rather than forcing a retry.
+const VISUAL_PLAN_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    slug: { type: 'string' },
+    visuals_planned: { type: 'boolean' },
+    reused: { type: 'boolean' },
+    components: { type: 'number' },
+    figures: { type: 'number' },
+    images: { type: 'number' },
+    rewrites_needed: { type: 'number', description: 'length of visual_rewrite_plan; the prose-rework runs only when > 0' },
+  },
 }
 
 // Independent link-relevance reviewer for one already-written bundle: fetches each
@@ -252,7 +350,7 @@ const buildFiguresPrompt = (spec) =>
     `1. Read the figure-authoring brief IN FULL: ${figuresPath}`,
     `2. Read the figure style guide IN FULL: ${figureStylePath}`,
     `3. The draft bundle is at: ${outDir}/${spec.content_id}.bundle.json`,
-    '   Read it — body_markdown is FINAL; figure_requests are the writer\'s contracts.',
+    '   Read it — body_markdown is FINAL; figure_requests are the visual-plan stage\'s contracts.',
     `4. Write each SVG to ${outDir}/${spec.content_id}.figures/<id>.svg, then rasterize it`,
     `   ON THE SERVER: bash ${renderPath} ${outDir} figure_raster --svg @W/${spec.content_id}.figures/<id>.svg`,
     '   The wrapper writes <id>.png + <id>.webp back next to the SVG locally.',
@@ -488,12 +586,46 @@ const results = await pipeline(
           model: M_AUTHOR,
         })
       ).then((status) => ({ slug: spec.slug, content_id: spec.content_id, status })),
-    // Stage 2 — QUALITY GATE (merged intent + editorial). ONE Sonnet judge scores BOTH
-    // coverage/scope AND flow/cohesion/voice/seams; on a real failure of EITHER dimension,
-    // ONE Opus revise adds the missing substance + smooths the named seams together; ONE
-    // Sonnet re-judge records the honest verdicts. Runs before the relevance gate + visuals
-    // so they see the FINAL body. Patches both an intent_gate (content_import blocks on
-    // satisfied=false) and an editorial_gate (advisory) verdict into the bundle.
+    // Stage 2 — VISUAL PLAN (+ conditional prose rework). The write stage produced PURE
+    // PROSE; this is where visuals are chosen and placed, decoupled from the writing so the
+    // prose was never bent to fit a component. A Sonnet planner reads the FINAL body + the
+    // brief's format-agnostic visual_obligations/visual_gap + the carried competitor-visual
+    // evidence, decides the needed visuals CATALOG-BLIND, maps each to the best vehicle
+    // (component/figure/NB2) to beat competitors on intent satisfaction, seats the blocks/
+    // markers, and writes a visual_rewrite_plan. An Opus rework reseats ONLY the flagged
+    // paragraphs, and ONLY when rewrites_needed > 0 (most articles seat cleanly). Runs BEFORE
+    // the quality gate so the gate judges the article WITH its visuals — the coherence pass.
+    async (authored, spec) => {
+      if (!visualPlanPath || !authored || authored.status == null) {
+        return { ...authored, visualPlan: null }
+      }
+      const plan = await agent(buildVisualPlanPrompt(spec), {
+        label: `visual-plan:${spec.slug}`,
+        phase: 'Visual plan',
+        agentType: at('visual'), // visual: reads body + catalog, patches the bundle
+        model: M_JUDGE, // selecting + placing visuals against finished prose is judgement
+        schema: VISUAL_PLAN_SCHEMA,
+      })
+      const rewrites = plan && Number.isFinite(Number(plan.rewrites_needed)) ? Number(plan.rewrites_needed) : 0
+      let reworked = false
+      if (rewrites > 0 && visualRewritePath) {
+        await agent(buildVisualRewritePrompt(spec), {
+          label: `visual-rewrite:${spec.slug}`,
+          phase: 'Visual plan',
+          agentType: at('author'), // author: reseats body prose around the placed visuals
+          model: M_AUTHOR, // reseating prose is generative quality — stays Opus
+        })
+        reworked = true
+      }
+      return { ...authored, visualPlan: { planned: !!plan, rewrites, reworked } }
+    },
+    // Stage 3 — QUALITY GATE (merged intent + editorial). ONE Sonnet judge scores BOTH
+    // coverage/scope AND flow/cohesion/voice/visual-integration/seams; on a real failure of
+    // EITHER dimension, ONE Opus revise adds the missing substance + smooths the named seams
+    // together; ONE Sonnet re-judge records the honest verdicts. Runs AFTER the visual plan,
+    // so it judges the article WITH its visuals in place — the end-to-end coherence gate —
+    // and before the relevance gate + figure-drawing. Patches both an intent_gate
+    // (content_import blocks on satisfied=false) and an editorial_gate (advisory) verdict.
     async (authored, spec) => {
       if (!qualityGatePath || !authored || authored.status == null) {
         return { ...authored, intentGate: null, editorialGate: null }
@@ -557,11 +689,12 @@ const results = await pipeline(
         editorialGate: { reads_well: !!(verdict && verdict.reads_well), revised },
       }
     },
-    // Stage 3 — POST-BODY, against the FINAL body. The relevance gate and the
-    // figures chain both read only the finished article and nothing else, and
-    // neither consumes the other's output, so they run CONCURRENTLY. Measured on an
-    // 11-article cluster, serializing the post-body stages cost 338 minutes of chain
-    // against 207 minutes when overlapped.
+    // Stage 4 — POST-BODY, against the FINAL body (now including its visuals). The
+    // relevance gate and the figures chain both read only the finished article and
+    // nothing else, and neither consumes the other's output, so they run CONCURRENTLY.
+    // Measured on an 11-article cluster, serializing the post-body stages cost 338
+    // minutes of chain against 207 minutes when overlapped. The figures stage draws the
+    // figure_requests the VISUAL PLAN produced (the author no longer emits them).
     //
     // The bespoke hero and the NB2 photoreal images used to be two more stages here.
     // They are now produced AFTER content_import by the standalone images workflow
@@ -620,7 +753,10 @@ const editorialChecked = ok.filter((r) => r && r.editorialGate).length
 const editorialPassed = ok.filter((r) => r && r.editorialGate && r.editorialGate.reads_well).length
 const editorialRevised = ok.filter((r) => r && r.editorialGate && r.editorialGate.revised).length
 const figuresRun = ok.filter((r) => r && r.figures).length
+const visualsPlanned = ok.filter((r) => r && r.visualPlan && r.visualPlan.planned).length
+const visualsReworked = ok.filter((r) => r && r.visualPlan && r.visualPlan.reworked).length
 log(`done: ${ok.length}/${contents.length} drafts written, ${gatedCount} passed the relevance gate — bundles in ${outDir}`)
+log(`visual plan: ${visualsPlanned}/${ok.length} article(s) had visuals selected + placed post-prose (${visualsReworked} needed an Opus paragraph rework to seat them)`)
 log(`intent gate: ${intentSatisfied}/${intentChecked} satisfied (${intentRevised} revised once); unsatisfied drafts are flagged at content_import`)
 log(`editorial gate: ${editorialPassed}/${editorialChecked} read cleanly (${editorialRevised} revised once — only cohesion <= 2 triggers it); the verdict is advisory`)
 log(`figures: drawn for ${figuresRun} article(s) — not visually judged (the gate was removed 2026-08-06); a human reviews every draft before publishing`)
@@ -867,6 +1003,8 @@ return {
   requested: contents.length,
   completed: ok.length,
   externalDomains,
+  visualsPlanned,
+  visualsReworked,
   gated: gatedCount,
   intentChecked,
   intentSatisfied,
