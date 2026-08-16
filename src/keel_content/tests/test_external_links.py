@@ -13,6 +13,7 @@ from keel_content.core.external_links import (
     domain_allowed,
     domain_blocked,
     domain_of,
+    is_domain_root,
     render_sources_markdown,
     strip_sources_section,
     verify_sources,
@@ -275,3 +276,30 @@ class WikipediaCapTests(SimpleTestCase):
         self.assertEqual(len(report.verified), 1)
         self.assertEqual(len(report.dropped), 1)
         self.assertIn("wikipedia cap", report.dropped[0].reason)
+
+
+class DomainRootTests(SimpleTestCase):
+    def test_bare_root_and_slash_are_roots(self):
+        self.assertTrue(is_domain_root("https://www.fca.org.uk"))
+        self.assertTrue(is_domain_root("https://www.fca.org.uk/"))
+
+    def test_deep_page_is_not_a_root(self):
+        self.assertFalse(is_domain_root("https://www.fca.org.uk/consumers/leverage"))
+        self.assertFalse(is_domain_root("https://en.wikipedia.org/wiki/Forex"))
+
+    def test_query_or_fragment_is_not_a_root(self):
+        self.assertFalse(is_domain_root("https://x.example/?q=1"))
+        self.assertFalse(is_domain_root("https://x.example/#a"))
+
+    def test_non_http_or_empty_is_not_a_root(self):
+        self.assertFalse(is_domain_root("/academy/foo"))
+        self.assertFalse(is_domain_root(""))
+
+    def test_verify_sources_drops_fast_lane_homepage(self):
+        # Even a trusted fast-lane regulator homepage must be dropped (deep-link or drop).
+        sources = [{"url": "https://www.cftc.gov/", "anchor": "CFTC", "role": "further_reading"}]
+        with mock.patch.object(ext, "_http_ok", lambda url, *, session: (True, 200, "")):
+            report = verify_sources(sources)
+        self.assertEqual(report.verified, [])
+        self.assertEqual(len(report.dropped), 1)
+        self.assertIn("domain root", report.dropped[0].reason)

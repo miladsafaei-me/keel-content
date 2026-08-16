@@ -538,6 +538,27 @@ def domain_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def is_domain_root(url: str) -> bool:
+    """True when ``url`` is a bare domain root / homepage (a banned link target).
+
+    An external link must be *page-relevant* — it must point to the specific page
+    that covers the exact point being made, not merely to a relevant organisation's
+    front door. A homepage (empty path or ``/``, no query, no fragment) is authority
+    without value: live and on-brand, but not reading material. This is the
+    deterministic backstop for the ``link-relevance-gate`` prompt's "drop generic
+    homepage" instruction — an LLM can still let one slip, so the mechanical gate
+    drops it regardless of how trusted the domain is (even a fast-lane regulator
+    homepage must be deep-linked or dropped).
+    """
+    try:
+        p = urlparse((url or "").strip())
+    except ValueError:
+        return False
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return False
+    return p.path.rstrip("/") == "" and not p.query and not p.fragment
+
+
 def _fast_lane_domains() -> frozenset[str]:
     """The trusted fast-lane: the shipped default set plus any host-supplied hosts.
 
@@ -690,6 +711,16 @@ def verify_sources(
                     SourceCheck(
                         url, anchor, role, False,
                         reason=f"blocked domain ({domain_of(url) or 'invalid url'})",
+                    )
+                )
+                continue
+            if is_domain_root(url):
+                # Page-relevant, never domain-relevant: a bare homepage is dropped
+                # even on the trusted fast-lane — deep-link the exact page or drop.
+                report.dropped.append(
+                    SourceCheck(
+                        url, anchor, role, False,
+                        reason="bare domain root / homepage — link a page-relevant deep page or drop",
                     )
                 )
                 continue

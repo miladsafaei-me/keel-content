@@ -140,6 +140,12 @@ to the writing pass:
   `"further_reading"`). Judge by **authority** (real editorial standards — never a content
   farm/AI mill/SEO doorway) and **value** (goes genuinely deeper on *this* sub-topic).
   Wikipedia is a last resort (≤2/article, and the 2nd only with ≥1 other-domain source).
+  **Page-relevant, never domain-relevant (hard rule):** every `url` must be a *specific
+  deep page* that covers the exact point — a real path beyond `/` — never a bare domain
+  root or homepage. A regulator's front door (`https://www.fca.org.uk/`) is not a source;
+  the page that explains the rule is. If you cannot name a genuinely relevant deep page on
+  that organisation, **omit it** — never downgrade to the homepage to keep a link (the
+  deterministic gate drops bare roots regardless, so a homepage link is simply lost).
   **Never link:** our own affiliate/partner links, a competitor's sign-up/pricing/product
   page (link their explainer, not their checkout), URL-shorteners, or any bare
   product/download/pricing/homepage page. The `anchor` must describe what the page *actually

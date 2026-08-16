@@ -109,6 +109,11 @@ You do **not** invent new URLs. You only keep / drop / fix the ones given.
 - **Never keep**, regardless: our own {{PARTNER_MODEL}} / affiliate / partner links,
   vendors or providers *we promote*, any URL-shortener, a competitor's sign-up / pricing
   / product / funnel page, an anonymous content farm, or a thin SEO/affiliate blog.
+- **Bare domain root / homepage → always drop (mechanical).** Any URL whose path is empty
+  or just `/` (no deeper page) is dropped no matter how authoritative the domain —
+  page-relevant, never domain-relevant. A regulator/organisation front door is authority
+  without value; keep only the specific deep page that covers the point. The downstream
+  deterministic gate drops bare roots anyway, so keeping one only loses it silently.
 - Do not add URLs that were not proposed. Do not change a `url` (only its anchor / role
   / vetted flag).
 - Keep **2–10** strong *further-reading* sources — this is a **preferred band, not a
