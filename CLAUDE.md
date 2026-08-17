@@ -4,6 +4,10 @@ Part of the **Keel** platform (see keel-kit `PLATFORM.md`). This is a Bucket-2 r
 Django app: the business-blind content-generation pipeline. English only; no banner
 comments; block-form multi-line comments only; CSS variables only in any styling.
 
+## Task tracking
+
+Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), not in chat memory. Every pending task — priority, prerequisites/dependencies, enough context to resume cold — goes there before starting new work; remove a task from TODO.md the moment it's done.
+
 ## Boundaries — what is here vs what stays in the host
 
 - **Here (generic engine):** `core/` (Anthropic client, gates, figure/hero/link passes,
