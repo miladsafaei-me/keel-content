@@ -129,6 +129,76 @@ def upsert_cluster_job(
     return job, outcome
 
 
+def append_to_open_pool(
+    *,
+    base_slug: str,
+    label: str,
+    keywords,
+    market: str = "",
+    source_type: str = "manual",
+    source_ref: str = "",
+    notes: str = "",
+):
+    """Add keywords to the newest OPEN pool under ``base_slug``, opening one if needed.
+
+    This is the accumulator path, for callers that hand over keywords a few at a time
+    rather than as a finished research batch — a reader picking single queries out of a
+    report, for instance. Each pick joins the same pool so they are clustered TOGETHER;
+    clustering one keyword on its own would defeat the point, since which keywords share
+    an intent is exactly what the analysis is for.
+
+    A pool that has already been clustered is never reopened: its keywords are content
+    plans now, and quietly appending to it would either lose the new pick or re-cluster
+    settled work. Instead the next pick opens the next generation (``base-2``,
+    ``base-3``, ...), so nothing is dropped and nothing is redone.
+
+    Returns ``(job, outcome)``.
+    """
+    Job = cluster_job_model()
+    if Job is None:
+        raise CommandError("this host has no clustering queue model configured")
+
+    base_slug = (base_slug or "").strip()[:200]
+    if not base_slug:
+        return None, "skipped"
+
+    open_pool = (
+        Job.objects.filter(slug__startswith=base_slug)
+        .exclude(status__in=_SETTLED)
+        .order_by("-created_at")
+        .first()
+    )
+    if open_pool is not None:
+        return upsert_cluster_job(
+            label=open_pool.label or label,
+            keywords=keywords,
+            slug=open_pool.slug,
+            market=open_pool.market or market,
+            source_type=source_type,
+            source_ref=source_ref,
+            notes=notes,
+        )
+
+    # Every generation so far is settled — open the next one rather than touching them.
+    taken = set(
+        Job.objects.filter(slug__startswith=base_slug).values_list("slug", flat=True)
+    )
+    slug = base_slug
+    n = 1
+    while slug in taken:
+        n += 1
+        slug = f"{base_slug}-{n}"
+    return upsert_cluster_job(
+        label=label,
+        keywords=keywords,
+        slug=slug,
+        market=market,
+        source_type=source_type,
+        source_ref=source_ref,
+        notes=notes,
+    )
+
+
 class Command(BaseCommand):
     help = "Deposit a keyword pool into the clustering queue."
 
