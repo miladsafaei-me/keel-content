@@ -15,6 +15,7 @@ Configuration surface (all optional)::
 
     KEEL_CONTENT = {
         "content_plan_model": "blog.ContentPlan",     # swappable content queue model
+        "cluster_job_model": "blog.KeywordClusterJob",  # swappable clustering queue model
         "post_model": "blog.Post",                    # swappable article model
         "tag_model": "blog.Tag",                      # swappable term/tag model
         "topic_cluster_model": "blog.TopicCluster",   # swappable cluster model
@@ -47,6 +48,24 @@ def _cfg(key: str, default):
 
 def content_plan_model():
     return django_apps.get_model(_cfg("content_plan_model", "blog.ContentPlan"))
+
+
+def cluster_job_model():
+    """The keyword-clustering queue model, or ``None`` when the host has none.
+
+    Unlike every other accessor here this one degrades to ``None`` instead of raising:
+    the clustering queue is a newer capability than the rest of the pipeline, so a host
+    pinned to an older CMS simply has no such model. Callers treat ``None`` as "this
+    host does not run a clustering queue" and skip the stage rather than crashing the
+    autopilot's decision pass, which must keep working for every other action.
+    """
+    label = _cfg("cluster_job_model", "blog.KeywordClusterJob")
+    if not label:
+        return None
+    try:
+        return django_apps.get_model(label)
+    except (LookupError, ValueError):
+        return None
 
 
 def post_model():

@@ -30,6 +30,9 @@ Actions, in priority order:
 
 ``recover``   a cluster is claimed (``generating``) but nothing is running — a
               previous run died. Import whatever finished, release the rest.
+``cluster``   a raw keyword pool waits in the clustering queue. Clustering is what
+              REFILLS the production queue, so it outranks every action below it:
+              a drained roadmap otherwise reports idle forever.
 ``reconcile`` rows sit in ``planned``: they have not cleared the intent-dedup gate,
               and every action below reads ``reconciled``, so they are invisible
               to the loop until this runs.
@@ -61,7 +64,12 @@ from django.core.management.base import BaseCommand
 
 from keel_content.core import visual_queue
 from keel_content.core.scope import cluster_priority, scope_weight
-from keel_content.host import content_plan_model, post_model
+from keel_content.host import cluster_job_model, content_plan_model, post_model
+
+# A pool that has failed this many times stops being offered. Without a cap one
+# un-clusterable pool would sit at the head of the queue forever and starve content
+# production entirely, since clustering outranks every production action.
+CLUSTER_MAX_ATTEMPTS = 3
 
 
 class Command(BaseCommand):
@@ -111,7 +119,22 @@ class Command(BaseCommand):
                 reason=f"cluster '{slug}' is claimed; a run may be in flight",
             )
 
-        # 2. RECONCILE — `planned` rows have not passed the intent-dedup gate, and
+        # 2. CLUSTER — raw keyword pools wait in the clustering queue. This runs BEFORE
+        #    every production action because clustering is what REFILLS the production
+        #    queue: until it does, a drained roadmap just reports idle forever, and
+        #    refilling it was the one step in the whole loop that always needed a human.
+        #    Draining pools first also makes the reconcile below strictly better — a
+        #    whole batch of fresh rows lands at once and is deduped against each other
+        #    in one pass, instead of trickling in and colliding across ticks.
+        #
+        #    It stays BEHIND `recover`, which releases a dead run's claims: recovering a
+        #    half-produced cluster is repair work on content that already exists, and
+        #    always outranks starting something new.
+        job_action = self._next_cluster_job(opts["assume_idle_claim"])
+        if job_action is not None:
+            return self._emit(**job_action)
+
+        # 3. RECONCILE — `planned` rows have not passed the intent-dedup gate, and
         #    NOTHING downstream can see them: every later action here reads
         #    `reconciled`, so a planned row is invisible to the loop and waits
         #    forever. Before this action existed, ingesting a batch and expecting
@@ -385,6 +408,60 @@ class Command(BaseCommand):
                 )
             ),
         )
+
+    def _next_cluster_job(self, assume_idle_claim: bool):
+        """The highest-demand keyword pool waiting to be clustered, or ``None``.
+
+        Returns the ``_emit`` kwargs rather than emitting, so the caller keeps the
+        single-exit shape the rest of ``handle`` uses. ``None`` means the queue is
+        empty, the host has no clustering queue at all, or every remaining pool has
+        burned its attempts — in all three cases the loop must fall through to
+        content production rather than stall here.
+        """
+        Job = cluster_job_model()
+        if Job is None:
+            return None
+
+        # A pool left in `clustering` is a claim from a run that died: the driver only
+        # asks with --assume-idle-claim while holding the run lock, so at that point
+        # nothing is in flight and the claim is provably stale. Without the flag the
+        # honest answer is "busy", exactly as for a claimed content cluster.
+        stale = Job.objects.filter(status="clustering", attempts__lt=CLUSTER_MAX_ATTEMPTS)
+        if stale.exists() and not assume_idle_claim:
+            job = stale.order_by("-priority", "-created_at").first()
+            return {
+                "action": "busy",
+                "cluster": job.slug,
+                "rows": job.keyword_count,
+                "reason": f"keyword pool '{job.slug}' is claimed; a clustering run may be in flight",
+            }
+
+        statuses = ["queued", "clustering"] if assume_idle_claim else ["queued"]
+        job = (
+            Job.objects.filter(status__in=statuses, attempts__lt=CLUSTER_MAX_ATTEMPTS)
+            .order_by("-priority", "-created_at")
+            .first()
+        )
+        if job is None:
+            return None
+
+        retry = job.status == "clustering"
+        return {
+            "action": "cluster",
+            "cluster": job.slug,
+            "rows": job.keyword_count,
+            "market": job.market or None,
+            "reason": (
+                f"keyword pool '{job.slug}' holds {job.keyword_count} unclustered "
+                f"keyword(s)"
+                + (
+                    f"; a previous clustering run died mid-pool (attempt {job.attempts + 1}"
+                    f" of {CLUSTER_MAX_ATTEMPTS})"
+                    if retry
+                    else "; the content queue cannot be refilled until it is clustered"
+                )
+            ),
+        }
 
     def _emit(self, **payload):
         self.stdout.write(json.dumps({k: v for k, v in payload.items() if v is not None}))
