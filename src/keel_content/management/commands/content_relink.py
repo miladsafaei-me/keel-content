@@ -16,6 +16,20 @@ to its clean state, inserts the new edges via the same deterministic ``apply_int
 inserter used at publish, then rebuilds ``content_raw`` + ``content_rendered`` exactly as
 ``publish_from_bundle`` does. Self-links and edges to unknown slugs are dropped as a
 deterministic backstop. Originals are written to ``--backup`` before any DB write.
+
+``--scope`` (default ``cluster``) selects which round-trip runs:
+
+- ``cluster`` (default, unchanged from before ``--scope`` existed): the within-cluster
+  round-trip above — candidates are the source post's own cluster mates.
+- ``cross-cluster`` (see ``prompts_default/cross-cluster-links.md``, the P1.2 pass):
+  ``export`` offers, per source post, the PILLAR of every OTHER active
+  ``TopicCluster`` as its only candidates — never a spoke, never the source's own
+  cluster. ``apply`` enforces a hard ceiling of 2 accepted cross-cluster edges per
+  source article, and consults the P1.1 site-wide anchor registry
+  (``core/anchor_registry.py``) once per invocation — never per anchor, per that
+  module's own documented reuse contract — rejecting (and reporting, never silently
+  dropping) any edge whose anchor is already claimed by a different target or is
+  itself conflicted across the corpus.
 """
 
 from __future__ import annotations
@@ -25,6 +39,7 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from keel_content import host
+from keel_content.core.anchor_registry import AnchorRegistry, normalize_anchor, scan_anchor_registry
 from keel_content.core.internal_links import (
     apply_internal_links,
     strip_internal_blog_links,
@@ -32,6 +47,13 @@ from keel_content.core.internal_links import (
 
 ContentPlan = host.content_plan_model()
 Post = host.post_model()
+
+# Mirrors internal_links._MAX_LINKS_PER_ARTICLE's role as a runaway guard, but this
+# ceiling is specific to the cross-cluster pass and much tighter: pillar-to-pillar
+# edges are the ones most likely to over-link a site (see cross-cluster-links.md), so
+# they get their own hard cap that is enforced here, on top of (not instead of) the
+# inserter's own 8-per-article ceiling downstream.
+_MAX_CROSS_CLUSTER_EDGES_PER_ARTICLE = 2
 
 
 def _produced_plans(cluster: str | None):
@@ -44,6 +66,61 @@ def _produced_plans(cluster: str | None):
     return list(qs)
 
 
+def _active_cluster_pillars() -> dict:
+    """``{topic_cluster_id: candidate-pillar dict}`` for every active cluster with a pillar.
+
+    Built once per export call and filtered per source post below rather than
+    requeried per post — the candidate pool (every other active cluster's pillar) is
+    the same set for every source article in the export, so there is exactly one
+    query here, the same "scan once, reuse" posture ``anchor_registry.py`` documents
+    for its own registry.
+    """
+    TopicCluster = host.topic_cluster_model()
+    clusters = (
+        TopicCluster.objects.filter(status="active", pillar__isnull=False)
+        .select_related("pillar")
+        .order_by("name")
+    )
+    out = {}
+    for tc in clusters:
+        pillar_post = tc.pillar
+        plan = getattr(pillar_post, "content_plan", None)
+        out[tc.id] = {
+            "cluster": tc.name,
+            "slug": pillar_post.slug,
+            "title": pillar_post.title,
+            "intent": (plan.intent if plan else "") or "",
+            "scope_includes": list(plan.scope_includes or []) if plan else [],
+            "scope_excludes": list(plan.scope_excludes or []) if plan else [],
+        }
+    return out
+
+
+def _registry_verdict(registry: AnchorRegistry, anchor: str, target_url: str) -> str | None:
+    """``None`` if ``anchor`` may be used for ``target_url``, else a rejection reason.
+
+    Consults the already-built :class:`AnchorRegistry` passed in — this function never
+    rescans the corpus itself, matching the reuse contract ``anchor_registry.py``
+    documents (build once per pass, call ``.claimed_target``/inspect ``.counts`` many
+    times). An anchor the registry has never seen is free to claim. An anchor already
+    claimed by this SAME target is not a new claim and passes through. An anchor
+    claimed by a DIFFERENT target, or one that is itself conflicted (mapped to more
+    than one target already), is cannibalization at the internal-link layer and is
+    rejected here rather than silently overwritten.
+    """
+    norm = normalize_anchor(anchor)
+    targets = registry.counts.get(norm)
+    if not targets:
+        return None
+    if len(targets) > 1:
+        return "anchor is conflicted in the anchor registry"
+    target_key = target_url.strip().rstrip("/").lower()
+    (only_target,) = targets
+    if only_target != target_key:
+        return f"anchor already claimed by {only_target!r}"
+    return None
+
+
 class Command(BaseCommand):
     help = "Export/apply blog->blog internal-link plans for published pipeline posts."
 
@@ -53,13 +130,24 @@ class Command(BaseCommand):
         parser.add_argument("--plan", default=None, help="apply: path to the edge-plan JSON.")
         parser.add_argument("--backup", default=None, help="apply: path to write originals before mutating.")
         parser.add_argument("--dry-run", action="store_true", help="apply: report without writing.")
+        parser.add_argument(
+            "--scope",
+            choices=["cluster", "cross-cluster"],
+            default="cluster",
+            help="'cluster' (default, unchanged): within-cluster round-trip against the "
+            "source post's own cluster mates. 'cross-cluster': pillar-to-pillar edges "
+            "against every OTHER active cluster's pillar, capped at 2 accepted edges "
+            "per source article and checked against the site-wide anchor registry.",
+        )
 
     def handle(self, *args, **opts):
         if opts["mode"] == "export":
-            return self._export(opts["cluster"])
-        return self._apply(opts["plan"], opts["backup"], opts["dry_run"], opts["cluster"])
+            return self._export(opts["cluster"], opts["scope"])
+        return self._apply(opts["plan"], opts["backup"], opts["dry_run"], opts["cluster"], opts["scope"])
 
-    def _export(self, cluster: str | None):
+    def _export(self, cluster: str | None, scope: str = "cluster"):
+        if scope == "cross-cluster":
+            return self._export_cross_cluster(cluster)
         plans = _produced_plans(cluster)
         posts = {p.id: p for p in Post.objects.filter(id__in=[pl.produced_post_id for pl in plans])}
         clusters: dict[str, dict] = {}
@@ -82,6 +170,40 @@ class Command(BaseCommand):
                 }
             )
         self.stdout.write(json.dumps({"clusters": list(clusters.values())}, ensure_ascii=False))
+
+    def _export_cross_cluster(self, cluster: str | None):
+        """Per source post, offer the pillar of every OTHER active cluster as candidates.
+
+        Deliberately never the source's own cluster mates (that is the ``cluster``
+        scope's job) and never a spoke of another cluster (``cross-cluster-links.md``'s
+        hard "pillar-to-pillar only" rule) — a spoke is simply never in the candidate
+        pool this builds. ``--cluster`` here still means "limit which SOURCE posts are
+        exported", exactly as it does in the default scope; it does not limit the
+        candidate pool, which is always every other active cluster's pillar.
+        """
+        plans = _produced_plans(cluster)
+        posts = {p.id: p for p in Post.objects.filter(id__in=[pl.produced_post_id for pl in plans])}
+        pillars = _active_cluster_pillars()
+
+        out_posts = []
+        for pl in plans:
+            post = posts.get(pl.produced_post_id)
+            if post is None:
+                continue
+            candidates = [
+                entry for tc_id, entry in pillars.items() if tc_id != pl.topic_cluster_id
+            ]
+            out_posts.append(
+                {
+                    "slug": post.slug,
+                    "title": post.title,
+                    "intent": pl.intent or "",
+                    "cluster": pl.topic_cluster.name if pl.topic_cluster_id else "(none)",
+                    "body_markdown": strip_internal_blog_links(post.content_markdown_source or ""),
+                    "candidate_pillars": candidates,
+                }
+            )
+        self.stdout.write(json.dumps({"posts": out_posts}, ensure_ascii=False))
 
     def _stamp(self, cluster: str | None, dry_run: bool) -> None:
         """Record that this cluster has been relinked at its current article count.
@@ -119,7 +241,14 @@ class Command(BaseCommand):
         tc.save(update_fields=["brief"])
         self.stdout.write(f"marked {tc.slug} relinked at {produced} article(s)")
 
-    def _apply(self, plan_path: str | None, backup_path: str | None, dry_run: bool, cluster: str | None = None):
+    def _apply(
+        self,
+        plan_path: str | None,
+        backup_path: str | None,
+        dry_run: bool,
+        cluster: str | None = None,
+        scope: str = "cluster",
+    ):
         if not plan_path:
             raise CommandError("apply requires --plan PATH")
         if not dry_run and not backup_path:
@@ -127,6 +256,11 @@ class Command(BaseCommand):
         with open(plan_path, encoding="utf-8") as fh:
             plan = json.load(fh) or {}
         edges_by_slug = plan.get("edges") or {}
+        # Built ONCE for the whole apply run, never per anchor/per post — the exact
+        # reuse contract anchor_registry.py documents for AnchorRegistry. Only needed
+        # in cross-cluster scope; the default scope never touches the registry, which
+        # is part of what keeps its behavior byte-identical to before --scope existed.
+        registry = scan_anchor_registry() if scope == "cross-cluster" else None
         # OPTIONAL surgical rewrites. apply_internal_links can only link a phrase that
         # already exists in the prose — it matches the anchor verbatim and otherwise
         # reports "anchor not found". So a genuinely useful edge whose anchor has no
@@ -151,12 +285,16 @@ class Command(BaseCommand):
 
         totals = {"posts": 0, "inserted": 0, "dropped_self": 0, "dropped_unknown": 0,
                   "skipped": 0, "rewrites": 0, "rewrites_skipped": 0}
+        if scope == "cross-cluster":
+            totals["dropped_ceiling"] = 0
+            totals["dropped_registry"] = 0
         for slug, edges in edges_by_slug.items():
             post = posts.get(slug)
             if post is None:
                 self.stderr.write(f"skip: no post for source slug {slug!r}")
                 continue
             resolved = []
+            cross_accepted = 0
             for e in edges or []:
                 target = (e.get("target_slug") or "").strip()
                 anchor = (e.get("anchor") or "").strip()
@@ -168,7 +306,22 @@ class Command(BaseCommand):
                 if target not in valid_slugs:
                     totals["dropped_unknown"] += 1
                     continue
-                resolved.append({"anchor": anchor, "target_url": f"/blog/{target}"})
+                target_url = f"/blog/{target}"
+                if scope == "cross-cluster":
+                    if cross_accepted >= _MAX_CROSS_CLUSTER_EDGES_PER_ARTICLE:
+                        totals["dropped_ceiling"] += 1
+                        self.stderr.write(
+                            f"  {slug}: edge {anchor!r} -> {target} rejected "
+                            f"(cross-cluster ceiling of {_MAX_CROSS_CLUSTER_EDGES_PER_ARTICLE} reached)"
+                        )
+                        continue
+                    verdict = _registry_verdict(registry, anchor, target_url)
+                    if verdict:
+                        totals["dropped_registry"] += 1
+                        self.stderr.write(f"  {slug}: edge {anchor!r} -> {target} rejected ({verdict})")
+                        continue
+                    cross_accepted += 1
+                resolved.append({"anchor": anchor, "target_url": target_url})
 
             clean = strip_internal_blog_links(post.content_markdown_source or "")
             for rw in rewrites_by_slug.get(slug) or []:
@@ -202,4 +355,8 @@ class Command(BaseCommand):
             host.refresh_article_rendered(post)
 
         self.stdout.write(self.style.SUCCESS(json.dumps(totals)))
-        self._stamp(cluster, dry_run)
+        # The "relinked at N articles" marker is a within-cluster autopilot concept
+        # (content_next_action's relink gate reads it per cluster); the cross-cluster
+        # pass has no equivalent per-cluster completion notion, so it never stamps.
+        if scope == "cluster":
+            self._stamp(cluster, dry_run)

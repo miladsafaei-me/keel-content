@@ -16,7 +16,7 @@ It MUST match this shape (the publisher reads it via `content_import`):
   "meta_description": "<=160 chars; complements the title, carries the primary keyword naturally>",
   "excerpt": "<=200 chars; the card/summary line>",
   "key_takeaways_markdown": "- 2-4 bullet takeaways in Markdown",
-  "body_markdown": "the FULL article body in Markdown: first H2 onward, each in-body visual as a fenced cp-component data block at its anchor, every heading carrying {#section-id}, FAQ at the bottom",
+  "body_markdown": "the FULL article body in Markdown: first H2 onward, PURE PROSE with no visuals of any kind (no cp-component blocks, no [[FIGURE]]/[[IMAGE]] markers — a separate downstream visual-plan stage reads this finished body and adds every in-body visual afterward), every heading carrying {#section-id}, FAQ at the bottom",
   "featured_image_url": "",
   "external_sources": [
     {"url": "https://en.wikipedia.org/wiki/...", "anchor": "Source name — what it covers", "role": "further_reading"}
@@ -30,10 +30,6 @@ It MUST match this shape (the publisher reads it via `content_import`):
     {"id": "ar-1", "type": "video|screenshot|photo|data|chart",
      "description": "what the human must supply (specific enough to produce from)",
      "placement": "which section it belongs in"}
-  ],
-  "figure_requests": [
-    {"id": "fig-1", "section": "...", "comprehension_job": "...",
-     "content_notes": "...", "takeaway": "...", "caption": "...", "alt": "..."}
   ],
   "author_slug": null,
   "reviewer_slug": null,
@@ -68,13 +64,14 @@ It MUST match this shape (the publisher reads it via `content_import`):
   from the host's editorial model (it keys off `facets.markets`). Just get `facets` right.
 - `featured_image_url` stays `""` for code-in-page articles (the site supplies a default
   social card). Set it only for a real, available hero image.
-- **Do NOT author the `hero` field** — a separate stage designs the featured-image SVG after
-  your draft exists (`author-hero.md`). Omit `hero` entirely.
-- **Do NOT author the `figures` field** — you emit only `figure_requests` + their markers; a
-  separate stage draws, rasterizes, and judge-gates them. **The one-standalone-image floor is
-  satisfied by an NB2 image OR a figure** — a `figure_requests` entry is required ONLY when the
-  article carries no NB2 image and the concept is genuinely diagram-only. Do not emit a figure
-  purely to clear the floor when an NB2 image already covers it.
+- **Do NOT author `hero`, `figures`, `figure_requests`, `image_requests`, or any `cp-component`
+  block** — `body_markdown` is pure prose here, with no visuals of any kind. A separate
+  downstream visual-plan stage reads your FINISHED body afterward and decides, places, and
+  seats every in-body visual (components, drawn figures, NB2 images) and the hero against it —
+  deliberately decoupled so your writing is never bent to fit whatever happens to be in the
+  component catalog. Omit these fields entirely; the visual-plan stage patches them into the
+  SAME bundle file later. The one-standalone-image floor is that same downstream stage's
+  responsibility, not yours.
 
 **Then return — as your final message (the orchestrator reads this, not the article) — a
 compact one-line JSON status only:**

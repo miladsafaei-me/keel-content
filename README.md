@@ -101,8 +101,9 @@ script-runner) plus **deterministic overlap scoring** (`tools/overlap_score.py` 
 the Layer-4 pairwise audit with zero LLM tokens; only gray-band pairs get a Sonnet
 confirm pass; the brief overlap precheck is likewise plain-JS with Sonnet only on the
 gray band). `overlap_score.py` is invoked from the host repoRoot like `render_on_server.sh`
-(a host copies it from the package template into its `tools/`). Follow-up (not
-schema-blocking): the default `agent-author-brief` and `cluster-internal-links` prompts
-still describe the pre-v0.1.4 linking flow; a host using the defaults gets a working
-pipeline but not the fully-designed glossary/link behavior until those two default
-prompts are aligned.
+(a host copies it from the package template into its `tools/`). The default
+`agent-author-brief.md` and `cluster-internal-links.md` prompts were re-verified against
+this flow on 2026-08-18 (`intent-gate-rollout.md` P1.3): both now describe the brief-stage
+`glossary_targets`/`link_plan` contract and the directed `anchor_concept` hand-off
+accurately, so a host using the defaults gets the fully-designed glossary/link behavior,
+not just a working pipeline.

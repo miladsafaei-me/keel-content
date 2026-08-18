@@ -27,6 +27,30 @@ a candidate anchor matches a *target* by comparing against that target's declare
 the target's prose and guessing what it "seems" to cover. If a bundle's `intent` is
 blank, fall back to its `h1` + `title`.
 
+Two more inputs may ride alongside that list — neither is guaranteed on every run,
+and neither changes the hard rules below:
+
+- **A designed link plan** (`{"from_slug", "to_slug", "anchor_concept", "why"}`
+  edges), written by the cluster-pass stage *before any article was drafted* and
+  handed to every author as a heads-up: each author was asked to leave a natural,
+  verbatim home for its own outgoing `anchor_concept` while writing. **Treat a
+  planned edge as first-choice, not as a cap or a promise.** For every edge whose
+  `from_slug` matches a bundle in front of you: look for `anchor_concept` as a real
+  plain-text phrase in that bundle's body; if it's there, wire it to `to_slug`
+  exactly like any other edge. If the planned phrase never actually made it into
+  the body, fall back to finding your own verbatim, intent-matched anchor for that
+  edge — or drop it, same as any other edge that fails the hard rules. You may
+  still add a well-earned edge the plan omitted, and you may drop a planned edge
+  that fails intent-match; the plan informs the graph, it does not override the
+  rules that follow.
+- **Already-produced cluster siblings** — posts from an earlier batch or another
+  intake route that already exist in this same cluster, each carrying the same
+  `slug`/`role`/`title`/`intent` shape as a batch article. They are valid link
+  **targets** exactly like the bundles you're wiring, but you cannot edit them —
+  you only ever add edges pointing *at* them from a bundle you can write, never
+  edges *from* them. If one of them is the cluster's pillar, every spoke in front
+  of you links up to that existing pillar the same as it would to a batch pillar.
+
 ## The link topology (this is the SEO substance — follow it)
 
 Design the graph deliberately, not at random:
@@ -47,11 +71,13 @@ Design the graph deliberately, not at random:
 - **One link per distinct target per source article** (first/best mention only).
 - **The `anchor` MUST be a verbatim, plain-text phrase that already exists in the
   SOURCE article's `body_markdown`.** Copy it exactly (same case, same words). Do
-  not invent an anchor, do not pick a phrase from a heading, a table, a code block,
-  or inside an existing `[...](...)` link, and do not pick a phrase that sits inside
-  one of the article's HTML/visual blocks (anything with `<`/`>`). If you cannot
-  find a clean, intent-matched plain-text phrase in the body for a link you want,
-  **drop that link** — a forced or fabricated anchor is worse than no link.
+  not invent an anchor, do not pick a phrase from a heading, a table row, a
+  blockquote, a fenced code block, or inside an existing `[...](...)` link, and do
+  not pick a phrase that sits inside one of the article's HTML/visual blocks
+  (anything with `<`/`>`) — the deterministic inserter skips all of these lines, so
+  an anchor placed there is silently dropped anyway. If you cannot find a clean,
+  intent-matched plain-text phrase in the body for a link you want, **drop that
+  link** — a forced or fabricated anchor is worse than no link.
 - **Intent-matched anchor (the one rule the whole pass turns on).** An anchor is
   intent-matched *only* when the **search intent of the anchor phrase equals the
   declared `intent` of the TARGET** — i.e. someone who typed that phrase into Google
