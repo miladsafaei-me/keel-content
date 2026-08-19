@@ -26,7 +26,10 @@ from . import subject as subject_mod
 from .directions import BY_KEY, DIRECTIONS
 from .draw import seedof
 from .choose import assign, load_manifest
-from .worlds import WORLDS, palette
+from .worlds import SURFACES, WORLDS, palette
+
+#: Every surface, spread across each page. A host narrows this with --surfaces.
+DEFAULT_SURFACES = tuple(SURFACES)
 
 @dataclasses.dataclass
 class Paths:
@@ -153,7 +156,8 @@ def main(argv=None, paths=None):
     ap.add_argument("--og", action="store_true", help="also write the 1200px OG raster")
     ap.add_argument("--report", help="write a JSON report of every choice made")
     ap.add_argument("--surfaces", nargs="*",
-                    help="grounds to spread across the feed (tinted slate paper panel)")
+                    help=f"grounds to spread across the feed "
+                         f"(default: {' '.join(DEFAULT_SURFACES)})")
     ap.add_argument("--faults", help="write every layout fault to this file")
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero when the layout audit finds anything")
@@ -211,7 +215,7 @@ def main(argv=None, paths=None):
             break
 
     assigned = assign(pending, sorted(valid), order=order,
-                      surfaces=tuple(args.surfaces or ("tinted",)))
+                      surfaces=tuple(args.surfaces or DEFAULT_SURFACES))
     report, faults = [], []
     for subject, _cluster, _role in pending:
         slug = subject.key

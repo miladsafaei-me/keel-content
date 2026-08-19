@@ -973,7 +973,10 @@ class NestedRings(Direction):
         cx, cy = x + w - rmax - 12, y + h / 2
         col = cx - rmax - 26 - x
         out = ""
-        for i in range(n - 1, -1, -1):
+        # Widest first, narrowest last. Drawn the other way the outermost ring is
+        # painted over every ring it is supposed to contain, and a set of nested
+        # scopes comes out as one flat disc.
+        for i in range(n):
             r = rmax * (1 - i * 0.24)
             out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{r:.0f}" '
                     f'fill="{p["accent"] if i == 0 else p["mid"]}" '
