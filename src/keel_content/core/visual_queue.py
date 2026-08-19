@@ -37,13 +37,36 @@ ATTEMPTS_KEY = "visual_attempts"
 DEFAULT_MAX_ATTEMPTS = 2
 
 
+def _exclude_shelved(qs):
+    """Drop posts whose plan row is shelved — they are not part of any cluster.
+
+    A SHELVED ROW IS OUTSIDE THE CLUSTER ENTIRELY (Milad, 2026-08-19). A cluster is
+    complete when its L1-L3 rows are done; L4/L5 rows are kept only so a human can
+    revisit them months or years later, and nothing in the pipeline may wait on one.
+
+    This queue was the last gate that could. A post produced before its row was
+    shelved is a permanent draft, but it still answered "owed visuals" — and the
+    images pass refuses to start the next cluster until the current one's queue is
+    clear, so one undrawable, unpublishable draft could hold production still. It had
+    not happened yet (0 of 6 pending posts today) purely because the 34 shelved drafts
+    that exist were all imaged before they were shelved.
+
+    The threshold is read from the host's model rather than written as a literal, so
+    it can never disagree with the identical test in ``golive.ready_posts_qs``.
+    """
+    from keel_content.host import content_plan_model
+
+    shelf_from = int(getattr(content_plan_model(), "SCOPE_SHELF_FROM", 4))
+    return qs.exclude(content_plan__scope_relevance__gte=shelf_from)
+
+
 def pending_posts(Post, *, include_published: bool = False, include_blocked: bool = False):
     """Posts whose machine visuals are still owed.
 
     Mirrors ``export_pending_visuals``' own filters, so the count the driver acts
     on can never disagree with the set the exporter would actually write.
     """
-    qs = Post.objects.filter(images_ready=False)
+    qs = _exclude_shelved(Post.objects.filter(images_ready=False))
     if not include_published:
         qs = qs.exclude(status="published")
     if not include_blocked:
@@ -52,15 +75,22 @@ def pending_posts(Post, *, include_published: bool = False, include_blocked: boo
 
 
 def blocked_posts(Post):
-    return Post.objects.filter(images_ready=False, pending_visuals__has_key=BLOCKED_KEY)
+    return _exclude_shelved(
+        Post.objects.filter(images_ready=False, pending_visuals__has_key=BLOCKED_KEY)
+    )
 
 
 def cluster_by_post_id(ContentPlan) -> dict[int, str]:
-    """post id -> topic-cluster slug, for the rows that produced a post."""
+    """post id -> topic-cluster slug, for the rows that produced a post.
+
+    Shelved rows are left out, so a shelved post can never be grouped under a cluster
+    and make that cluster look like it still owes visuals.
+    """
     return {
         row.produced_post_id: row.topic_cluster.slug
         for row in (
             ContentPlan.objects.filter(produced_post__isnull=False)
+            .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
             .select_related("topic_cluster")
             .only("produced_post_id", "topic_cluster__slug")
         )

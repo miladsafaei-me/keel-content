@@ -1,5 +1,19 @@
 """Scope-relevance ranking policy for the content queue.
 
+WHAT A COMPLETE CLUSTER IS (Milad, 2026-08-19). A topic cluster is complete when its
+**L1-L3 rows** are produced, linked and published. L4/L5 rows are not late members of
+the cluster and not debt — they are OUTSIDE it. They stay in the database, undeleted,
+purely so a human can revisit the judgement in some later month or year; until then
+every part of the pipeline ignores them completely.
+
+The operative consequence is a hard rule: **nothing may block on, wait for, or be
+counted from a shelved row.** Not cluster ranking, not the brief or generate gate,
+not the relink marker, not the visuals queue, not the publish gate. A cluster whose
+L1-L3 rows are done IS done, however many shelved rows sit beside it. Each of these
+gates learned that separately and at least one of them cost real downtime, so a new
+query over ContentPlan or Post is wrong by default until it excludes the shelf.
+
+
 A row's demand contribution to its cluster is weighted by how tightly it sits in the
 consumer's niche (``ContentPlan.scope_relevance``, 1..5). A whole cluster of L1 rows
 therefore outranks an L3 cluster at equal raw demand — so the autopilot builds the
