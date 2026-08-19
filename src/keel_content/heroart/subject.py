@@ -174,11 +174,52 @@ def from_blog_post(post, limit=6):
     return None
 
 
+#: Column headings that name the *axis* of a comparison rather than a thing being
+#: compared. A table headed "Dimension | Trading Bot | Copy Trading" compares two
+#: products down its columns, not four dimensions down its rows — and reading it the
+#: wrong way round illustrates an article about bots with the words "What it means".
+#: "Metric" is deliberately absent: a table of metrics really does list them as rows.
+GENERIC_HEADS = {"", "-", "dimension", "aspect", "feature", "attribute", "criterion",
+                 "criteria", "category", "comparison", "field", "property"}
+
+
+def _entities_in_columns(columns, rows):
+    """Whether this table compares things across its columns rather than down them.
+
+    Both orientations are common and neither is wrong; what matters is that the item
+    list ends up holding the things the term compares. A table is read column-wise
+    when its own first heading names an axis, or when its row headers are statements
+    while its column headers are names.
+    """
+    if len(columns) < 3 or not rows:
+        return False
+    if not label_shaped([squeeze(c) for c in columns[1:]]):
+        return False
+    head = squeeze(columns[0]).lower()
+    if head in GENERIC_HEADS:
+        return True
+    return not label_shaped([squeeze(r[0]) for r in rows if r])
+
+
+def _transpose(columns, rows):
+    """Turn a column-wise comparison into the row-wise table `_from_rows` reads."""
+    width = len(columns)
+    header = ["Compared"] + [squeeze(r[0]) for r in rows if r]
+    out = []
+    for ci in range(1, width):
+        cells = [squeeze(columns[ci])]
+        cells += [squeeze(r[ci]) if len(r) > ci else "" for r in rows if r]
+        out.append(cells)
+    return [header] + out
+
+
 def from_glossary_term(term, limit=6):
-    """Adapter for backend/data/glossary-enriched.json entries.
+    """Adapter for a glossary term's own fields.
 
     Prefers the term's own comparison block, then its at-a-glance rows, then its
-    steps — three different shapes that all reduce to the same item list.
+    steps — three different shapes that all reduce to the same item list. The
+    comparison is read in whichever orientation puts the compared things in the item
+    list; see :func:`_entities_in_columns`.
     """
     kicker = (term.get("child_category") or term.get("parent_category")
               or "glossary").upper()
@@ -191,8 +232,9 @@ def from_glossary_term(term, limit=6):
     rows = comparison.get("rows") or []
     cols = comparison.get("columns") or []
     if rows and cols:
-        subject = _from_rows([cols] + rows, term["slug"], title, kicker, vocab,
-                             takeaway, limit)
+        table = (_transpose(cols, rows) if _entities_in_columns(cols, rows)
+                 else [cols] + rows)
+        subject = _from_rows(table, term["slug"], title, kicker, vocab, takeaway, limit)
         if subject:
             return subject
 
