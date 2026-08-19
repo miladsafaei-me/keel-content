@@ -28,6 +28,14 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   overview plus the one cluster they need, instead of the whole corpus.
 - **The generator + parsers** (`keel_content.tools`): the JS generation/brief/reconcile
   workflows and the worklist parsers.
+- **Subject-driven card and hero art** (`keel_content.heroart`): a second, newer image
+  engine that builds a listing cover and an article hero from *what the article
+  compares* — the column of its own comparison table that carries names. Deterministic,
+  balanced across the whole corpus including the order the feed paginates in, and gated
+  by a layout audit that reads the SVG it produced rather than the code that produced
+  it. Django-free. See [`HEROART.md`](HEROART.md). It does not replace
+  `core.hero` (five brand styles over six abstract motifs, chosen from a topic, which is
+  what SignalBots ships) — pick one per project rather than mixing them.
 - **The standalone images pass** (`images.workflow.js` + `export_pending_visuals` /
   `apply_post_images`): the bespoke hero and the in-article NB2 photoreal images are
   produced AFTER `content_import`, not inside the generation run — they cost ~123

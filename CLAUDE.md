@@ -11,7 +11,8 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
 ## Boundaries — what is here vs what stays in the host
 
 - **Here (generic engine):** `core/` (Anthropic client, gates, figure/hero/link passes,
-  glossary-gap), the five intake routes, `crawlmap/` (the crawl-map route's structure
+  glossary-gap), `heroart/` (the subject-driven card/hero renderer + its layout audit —
+  Django-free, see [HEROART.md](HEROART.md)), the five intake routes, `crawlmap/` (the crawl-map route's structure
   recovery, classification and atlas builders), the Twitter funnel models, the generator +
   parsers under `tools/`, the glossary-term authoring commands, and a default prompt set.
 - **Consumed from a sibling package:** the in-body visual catalog + renderer come from
