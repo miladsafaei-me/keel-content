@@ -278,8 +278,11 @@ class ChapterPlate(Direction):
              f'<stop offset="0" stop-color="{near}"/>'
              f'<stop offset="0.55" stop-color="{far}"/>'
              f'<stop offset="1" stop-color="{far}"/></linearGradient>'
+             # A wide wash of the accent used to sit over the plate. In the
+             # pastel register the accent is light enough that the wash took
+             # the ground with it, and a dark chapter plate came out near-white.
              f'<radialGradient id="{uid}hot" cx="0.5" cy="0.5" r="0.5">'
-             f'<stop offset="0" stop-color="{p["accent"]}" stop-opacity="0.5"/>'
+             f'<stop offset="0" stop-color="{p["accent"]}" stop-opacity="{0.10 if p.get('light') else 0.20}"/>'
              f'<stop offset="1" stop-color="{p["accent"]}" stop-opacity="0"/>'
              f'</radialGradient>'
              f'<filter id="{uid}grain2" x="0" y="0" width="100%" height="100%">'
@@ -292,7 +295,10 @@ class ChapterPlate(Direction):
         return d, b
 
     def motif(self, p, uid, s, box, big):
-        n = s.n or 3
+        # The count is what the article compares, not what this frame can hold.
+        # Read off the trimmed list it came out as four on nearly every card in the
+        # corpus, because four is the number of items a cover has room to draw.
+        n = s.total or s.n or 3
         head = s.head.upper()
         if big:
             # The numeral is the picture, so it is measured at the size it is drawn
@@ -321,7 +327,9 @@ class ChapterPlate(Direction):
             if listed:
                 out += txt_fit(COVER_PAD, 452, listed, room, 30, MIN_LABEL,
                                p["dim"], 500, SANS, op=0.9)
-            out += (f'<line x1="{COVER_PAD}" y1="452" x2="{COVER_PAD + 216}" y2="452" '
+            # The rule belongs between the heading and the list, not across it:
+            # both moved to make room for a larger numeral, and only one moved.
+            out += (f'<line x1="{COVER_PAD}" y1="404" x2="{COVER_PAD + 216}" y2="404" '
                     f'stroke="{p["accent"]}" stroke-width="6"/>')
             return out
         return txt(1010, 560, f"{n}", 420, p["accent"], 700, SERIF, anchor="middle",
@@ -341,8 +349,9 @@ class ChapterPlate(Direction):
         body += (f'<line x1="72" y1="{y + 18}" x2="152" y2="{y + 18}" '
                  f'stroke="{p["accent"]}" stroke-width="4"/>')
         head = s.head.upper()
-        body += txt(72, y + 58, f"{s.n} COMPARED" if head.startswith("COMPARED")
-                    else f"{head}  ·  {s.n} COMPARED", 13, p["dim"], 600, MONO, ls=2.4)
+        body += txt(72, y + 58, f"{s.total} COMPARED" if head.startswith("COMPARED")
+                    else f"{head}  ·  {s.total} COMPARED", 13, p["dim"], 600, MONO,
+                    ls=2.4)
         return svg(d, body + wordmark(p))
 
 
@@ -755,7 +764,7 @@ class ScreeningGrid(Direction):
                     f'width="{w * 0.58:.0f}" '
                     f'height="{len(lines) * label * 1.44 + 60:.0f}" rx="16" '
                     f'fill="{p["deep"]}" opacity="0.82"/>')
-            out += txt(x + 26, yy - label * 0.6, f"{s.n} SHORTLISTED", label * 0.42,
+            out += txt(x + 26, yy - label * 0.6, f"{s.total} SHORTLISTED", label * 0.42,
                        p["hot"], 700, MONO, ls=3)
             for i, item in enumerate(lines):
                 out += txt_fit(x + 26, yy + label * 0.9 + i * label * 1.4, item,

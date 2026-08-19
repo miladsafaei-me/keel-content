@@ -80,9 +80,13 @@ def _hex_at(hue, sat, target):
 #: A palette has two independent decisions: which hue, and what the hue is allowed to
 #: touch. The second is the surface.
 #:
-#: `paper` is a near-white sheet, `mist` a pale tint of the post's own hue, `slate` a
-#: soft charcoal. All three are quiet, and all three spend the hue on what is drawn
-#: rather than on the ground, so a page of them does not read as one colour per card.
+#: Two light and two dark. `paper` is a near-white sheet and `mist` a pale tint of the
+#: post's own hue; `dusk` and `deep` are dark grounds that carry the hue, which is what
+#: gives a feed its navy, green, violet and red cards.
+#:
+#: A dark ground is not allowed to be one fixed colour across a site. A neutral
+#: charcoal held every card at the same value and threw away the one thing a dark
+#: ground is good at — being the post's own colour at full depth.
 #:
 #: The register is pastel by construction: no role is fully saturated and none is
 #: black. Saturation tops out near half, the lit roles sit high on the luminance
@@ -111,11 +115,17 @@ SURFACES = {
         dim=(0.28, 0.2000), faint=(0.18, 0.6600), accent=(0.54, 0.1700),
         hot=(0.48, 0.3600),
     ),
-    "slate": dict(
-        page=(0.08, 0.0280), deep=(0.14, 0.0480), mid=(0.30, 0.1150),
-        lift=(0.34, 0.1900), ink=(0.08, 0.8200), onink=(0.08, 0.8200),
-        dim=(0.16, 0.3800), faint=(0.14, 0.1600), accent=(0.46, 0.4600),
-        hot=(0.42, 0.6400),
+    "dusk": dict(
+        page=(0.40, 0.0230), deep=(0.42, 0.0120), mid=(0.40, 0.0720),
+        lift=(0.40, 0.1350), ink=(0.14, 0.8500), onink=(0.14, 0.8500),
+        dim=(0.20, 0.4200), faint=(0.22, 0.1000), accent=(0.50, 0.4200),
+        hot=(0.46, 0.6200),
+    ),
+    "deep": dict(
+        page=(0.50, 0.0080), deep=(0.50, 0.0050), mid=(0.44, 0.0440),
+        lift=(0.44, 0.0950), ink=(0.16, 0.8800), onink=(0.16, 0.8800),
+        dim=(0.22, 0.4400), faint=(0.24, 0.0700), accent=(0.52, 0.3800),
+        hot=(0.48, 0.5800),
     ),
 }
 DEFAULT_SURFACE = "paper"
@@ -123,7 +133,7 @@ DEFAULT_SURFACE = "paper"
 #: Every surface holds its ground quiet and spends the colour on what is drawn. There
 #: is no container surface: a filled panel inside a filled ground is two backgrounds,
 #: and the second one is always the weaker picture.
-NEUTRAL = ("paper", "mist", "slate")
+LIGHT = ("paper", "mist")
 
 
 def palette(hue, surface=DEFAULT_SURFACE):
@@ -133,7 +143,7 @@ def palette(hue, surface=DEFAULT_SURFACE):
     out["good"] = GOOD
     out["hue"] = hue
     out["surface"] = surface
-    out["light"] = surface in ("paper", "mist")
+    out["light"] = surface in LIGHT
     # What the content is actually drawn over, which is not always the page: on the
     # container surface the motif sits on the container, and judging its contrast
     # against the sheet behind would measure the wrong pair.

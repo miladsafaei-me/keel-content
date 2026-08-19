@@ -93,7 +93,10 @@ resets the checkout carries the art with it.
    composition; the content supplies every string. No direction invents a label.
 2. **Numbers are drawn only when they are real.** Proportional widths and gauge needles
    move only when `Subject.weights` was populated from a numeric column. Nothing is
-   invented to make a picture look better.
+   invented to make a picture look better. **A stated count is `Subject.total`, never
+   `Subject.n`** — `n` is what survived truncation, so a direction that prints it prints
+   the size of its own frame. Read off `n`, the chapter plate said "4" on almost every
+   card in a corpus whose articles compare two to six things.
 3. **Cover safe area.** Covers keep every element inside `draw.COVER_PAD` (84 px on the
    1200x675 canvas). The single exception is a direction whose idea *is* leaving the
    frame; it sets `bleeds = True` and says so in its docstring. Everything else that
@@ -221,13 +224,19 @@ new motif: twenty-five directions on four surfaces are a hundred distinct cards.
 
 | surface | ground | where the hue goes |
 |---|---|---|
-| `paper` | a near-white sheet | the elements |
+| `paper` | a near-white sheet, neutral | the elements |
 | `mist` | a pale tint of the post's own hue | the elements |
-| `slate` | a soft charcoal | the elements |
+| `dusk` | a mid-dark ground in the post's hue | the ground and the elements |
+| `deep` | a deep ground in the post's hue | the ground and the elements |
 
-All three hold the ground quiet and spend the hue on what is drawn, so a page of them
-does not read as one colour per card. Surfaces are spread across the feed page the same
-way hues are.
+Two light and two dark, spread across the feed page the same way hues are, so a page
+carries all four.
+
+**A dark ground carries the post's hue; it is never one fixed colour.** A neutral
+charcoal held every dark card at the same value and threw away the one thing a dark
+ground is good at — being the post's own colour at full depth. `dusk` and `deep` are
+what give a feed its navy, green, violet and red cards. The light surfaces stay quiet
+by design: on a near-white sheet the colour belongs to what is drawn.
 
 **The register is pastel by construction.** No role is fully saturated and none is
 black: saturation tops out near half, the lit roles sit high on the luminance scale,

@@ -32,10 +32,17 @@ class Subject:
     #: Set once from the source items, and carried through `truncated` so a motif
     #: cannot mistake a clipped statement for a short name.
     named: bool = None
+    #: How many things the article actually compares, before any motif trimmed the
+    #: list to what it can draw. A direction that states a count must state this one:
+    #: reading `n` after truncation printed "4" on almost every chapter plate in the
+    #: corpus, because four is what the frame holds, not what the article weighed up.
+    total: int = None
 
     def __post_init__(self):
         if self.named is None:
             self.named = label_shaped(self.items)
+        if self.total is None:
+            self.total = len(self.items)
 
     @property
     def n(self):
@@ -48,7 +55,8 @@ class Subject:
             items=[clip(i, maxlen) for i in self.items[:limit]],
             notes=[clip(x, 40) for x in self.notes[:limit]],
             weights=self.weights[:limit] if self.weights else None,
-            vocabulary=self.vocabulary, takeaway=self.takeaway, named=self.named)
+            vocabulary=self.vocabulary, takeaway=self.takeaway, named=self.named,
+            total=self.total)
 
 
 def md_tables(body_markdown):
