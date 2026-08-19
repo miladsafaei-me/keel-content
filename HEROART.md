@@ -278,7 +278,47 @@ of them were invisible to the audit too.
 add it to `DIRECTIONS`. `fits` is what the scorer's routing is documented against, so a
 vague one never gets chosen well.
 
-## 8. Scaling to another content type
+## 8. The candidate set
+
+[`directions_proposed.py`](src/keel_content/heroart/directions_proposed.py) holds
+fifteen more directions, built by the method above and audited clean, but **not
+registered in `DIRECTIONS`**. Adding a direction re-assigns every post in a corpus, not
+only the posts that take the new motif, so a candidate waits until it has been looked
+at and wanted.
+
+| key | device it starts from |
+|---|---|
+| `bars` | measured length |
+| `rings` | nested scope |
+| `track` | sequence along a line |
+| `funnel` | attrition |
+| `matrix` | two-axis position |
+| `tree` | derivation from one source |
+| `coins` | physical quantity |
+| `scale` | weighing |
+| `pins` | place |
+| `strata` | depth, in section |
+| `dial` | a single instrument reading |
+| `passport` | an official record |
+| `compass` | bearing |
+| `pulse` | shape over time |
+| `seal` | certification |
+
+To adopt one, move its class into `directions.py`, add it to `DIRECTIONS`, and give it
+head-word routing in `choose.HEAD_MAP` if it should be reachable without a manifest.
+
+Preview any set against unlike subjects with the harness the method's step 7 describes:
+
+```python
+from keel_content.heroart.preview import contact_sheet
+from keel_content.heroart.directions_proposed import PROPOSED
+contact_sheet(PROPOSED, subjects, "/tmp/candidates.html")   # returns the fault count
+```
+
+The hue changes per column on purpose: a motif that only works in violet is a motif
+that does not work.
+
+## 9. Scaling to another content type
 
 Write one adapter that returns a `Subject`. Nothing in `draw.py` or `directions.py`
 changes. `subject.from_blog_post` and `subject.from_glossary_term` are the two that

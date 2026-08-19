@@ -1,5 +1,10 @@
 """Choosing a direction for each piece of content — deterministically.
 
+Named `choose` rather than `select`: a module called `select.py` shadows the
+standard library the moment its own directory lands on `sys.path`, which
+happens as soon as anyone runs a script from inside the package. `subprocess`
+imports `select`, so the failure surfaces far from its cause.
+
 Design note, 2026-08-19: an earlier version asked Sonnet subagents to pick a
 direction per post. Measured against this scorer the agents added no quality: they
 read the same signals (data shape, vocabulary, item count) and then converged hard —

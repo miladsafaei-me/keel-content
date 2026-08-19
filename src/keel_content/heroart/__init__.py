@@ -34,7 +34,7 @@ from .audit import check
 from .build import Paths, main
 from .directions import BY_KEY, DIRECTIONS, Direction
 from .draw import MAX_LABEL, MIN_LABEL, seedof
-from .select import assign, load_manifest, score
+from .choose import assign, load_manifest, score
 from .subject import Subject, from_blog_post, from_glossary_term
 from .worlds import HUE_WHEEL, allocate, palette
 

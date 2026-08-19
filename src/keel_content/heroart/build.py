@@ -25,7 +25,7 @@ from . import audit
 from . import subject as subject_mod
 from .directions import BY_KEY, DIRECTIONS
 from .draw import seedof
-from .select import assign, load_manifest
+from .choose import assign, load_manifest
 from .worlds import WORLDS, palette
 
 @dataclasses.dataclass
