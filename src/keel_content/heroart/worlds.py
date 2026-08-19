@@ -80,11 +80,13 @@ def _hex_at(hue, sat, target):
 #: A palette has two independent decisions: which hue, and what the hue is allowed to
 #: touch. The second is the surface.
 #:
-#: `tinted` puts the hue in everything, ground included — the original treatment, and
-#: the reason a feed of it reads as one colour per card however much the hue moves.
-#: The other three hold the ground neutral and spend the hue on what is drawn on it:
-#: `slate` on a near-black page, `paper` on a near-white one, and `panel` on a
-#: near-black page carrying one saturated container that the motif sits inside.
+#: `paper` is a near-white sheet, `mist` a pale tint of the post's own hue, `slate` a
+#: soft charcoal. All three are quiet, and all three spend the hue on what is drawn
+#: rather than on the ground, so a page of them does not read as one colour per card.
+#:
+#: The register is pastel by construction: no role is fully saturated and none is
+#: black. Saturation tops out near half, the lit roles sit high on the luminance
+#: scale, and depth comes from a soft tonal step rather than from a hard shadow.
 #:
 #: The pairing that holds on every surface, and the one thing to get right when
 #: writing a direction: `ink` is the type that reads on `page`, `mid` and `lift`;
@@ -92,47 +94,36 @@ def _hex_at(hue, sat, target):
 #: the label is in the file and not in the picture — on one surface only, which is why
 #: the audit checks contrast rather than trusting the author.
 #:
-#: Roles keep their meaning across all four — `ink` is always the text that reads on
-#: the page, `onink` always the text that reads on a `deep` or `accent` fill. On a dark
-#: surface those are the same colour; on `paper` they are opposites, which is exactly
-#: the mistake the audit's contrast check exists to catch.
+#: Roles keep their meaning across all three — `ink` is always the text that reads on
+#: the page, `mid` and `lift`; `onink` always the text that reads on `deep` and
+#: `accent`. On a dark surface those two are the same colour; on a light one they are
+#: opposites, which is exactly the mistake the audit's contrast check exists to catch.
 SURFACES = {
-    "tinted": dict(
-        page=(0.42, 0.0045), deep=(0.42, 0.0045), mid=(0.46, 0.0180),
-        lift=(0.46, 0.0430), ink=(0.55, 0.8600), onink=(0.55, 0.8600),
-        dim=(0.32, 0.4450), faint=(0.22, 0.1250), accent=(0.72, 0.2450),
-        hot=(0.86, 0.5600),
+    "paper": dict(
+        page=(0.05, 0.9100), deep=(0.46, 0.0900), mid=(0.30, 0.7000),
+        lift=(0.22, 0.8200), ink=(0.28, 0.0500), onink=(0.05, 0.9400),
+        dim=(0.26, 0.2400), faint=(0.14, 0.8000), accent=(0.52, 0.1900),
+        hot=(0.44, 0.4800),
+    ),
+    "mist": dict(
+        page=(0.14, 0.8400), deep=(0.46, 0.0700), mid=(0.32, 0.5600),
+        lift=(0.24, 0.7000), ink=(0.30, 0.0420), onink=(0.05, 0.9400),
+        dim=(0.28, 0.2000), faint=(0.18, 0.6600), accent=(0.54, 0.1700),
+        hot=(0.48, 0.3600),
     ),
     "slate": dict(
-        page=(0.00, 0.0100), deep=(0.06, 0.0180), mid=(0.55, 0.0700),
-        lift=(0.62, 0.1500), ink=(0.06, 0.8600), onink=(0.06, 0.8600),
-        dim=(0.16, 0.4200), faint=(0.10, 0.1100), accent=(0.85, 0.3200),
-        hot=(0.92, 0.6000),
-    ),
-    "paper": dict(
-        page=(0.03, 0.9000), deep=(0.70, 0.0400), mid=(0.45, 0.5000),
-        lift=(0.34, 0.6800), ink=(0.30, 0.0300), onink=(0.06, 0.9200),
-        dim=(0.30, 0.1800), faint=(0.16, 0.7000), accent=(0.85, 0.1500),
-        hot=(0.88, 0.3000),
-    ),
-    "panel": dict(
-        page=(0.02, 0.0620), deep=(0.55, 0.0060), mid=(0.60, 0.0280),
-        lift=(0.58, 0.0600), ink=(0.55, 0.8600), onink=(0.55, 0.8600),
-        dim=(0.32, 0.4450), faint=(0.24, 0.1300), accent=(0.80, 0.2600),
-        hot=(0.88, 0.5600),
+        page=(0.08, 0.0280), deep=(0.14, 0.0480), mid=(0.30, 0.1150),
+        lift=(0.34, 0.1900), ink=(0.08, 0.8200), onink=(0.08, 0.8200),
+        dim=(0.16, 0.3800), faint=(0.14, 0.1600), accent=(0.46, 0.4600),
+        hot=(0.42, 0.6400),
     ),
 }
-#: How much of the hue the ground itself is allowed to carry as a soft light. It is
-#: the glow, not the page colour, that made the neutral surfaces still read as one
-#: colour per card: a wide accent ellipse at any real opacity tints a white sheet
-#: lavender and a black one violet.
-GLOW = {"tinted": 1.0, "slate": 0.0, "paper": 0.0, "panel": 0.30}
+DEFAULT_SURFACE = "paper"
 
-DEFAULT_SURFACE = "tinted"
-
-#: Surfaces that hold the ground neutral. The container surface is listed here too:
-#: its page is neutral even though what sits on it is not.
-NEUTRAL = ("slate", "paper", "panel")
+#: Every surface holds its ground quiet and spends the colour on what is drawn. There
+#: is no container surface: a filled panel inside a filled ground is two backgrounds,
+#: and the second one is always the weaker picture.
+NEUTRAL = ("paper", "mist", "slate")
 
 
 def palette(hue, surface=DEFAULT_SURFACE):
@@ -142,12 +133,11 @@ def palette(hue, surface=DEFAULT_SURFACE):
     out["good"] = GOOD
     out["hue"] = hue
     out["surface"] = surface
-    out["light"] = surface == "paper"
-    out["glow"] = GLOW.get(surface, 1.0)
+    out["light"] = surface in ("paper", "mist")
     # What the content is actually drawn over, which is not always the page: on the
     # container surface the motif sits on the container, and judging its contrast
     # against the sheet behind would measure the wrong pair.
-    out["ground"] = out["mid"] if surface == "panel" else out["page"]
+    out["ground"] = out["page"]
     return out
 
 

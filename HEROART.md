@@ -150,6 +150,8 @@ polygon using the same metrics that placed it, and asks:
 | crowds the label plate | a loose decoration parked inside a plate's air (`BREATH`) |
 | type too small | a content label under `MIN_LABEL`; mono eyebrows have their own floor |
 | too little contrast | a word within `MIN_CONTRAST` of what it is printed on — present in the file, absent from the picture |
+| content leaves the frame half empty | the drawn content spans less than `MIN_SPREAD_X` × `MIN_SPREAD_Y` of the safe area — a small picture marooned in a large frame |
+| content presses the margin | anything drawn reaches past the safe area — crowded even where it is technically inside |
 | label too long / too much text on the card | a cover being read rather than seen |
 
 Run it on its own against any SVG:
@@ -219,16 +221,23 @@ new motif: twenty-five directions on four surfaces are a hundred distinct cards.
 
 | surface | ground | where the hue goes |
 |---|---|---|
-| `tinted` | the post's hue, with a soft light of the same hue | everything, ground included |
-| `slate` | neutral near-black, no glow | the elements, vividly |
-| `paper` | neutral near-white, no glow | the elements, on a light sheet |
-| `panel` | neutral graphite | one saturated container the motif sits inside |
+| `paper` | a near-white sheet | the elements |
+| `mist` | a pale tint of the post's own hue | the elements |
+| `slate` | a soft charcoal | the elements |
 
-`tinted` is the original treatment and the reason a feed of it reads as one colour per
-card however much the hue moves: the ground carries the hue, so the hue is the card.
-The other three hold the ground neutral. Surfaces are spread across the feed page the
-same way hues are, and a direction whose idea is running to the frame is never given
-the container surface, because a container is exactly what that idea gives up.
+All three hold the ground quiet and spend the hue on what is drawn, so a page of them
+does not read as one colour per card. Surfaces are spread across the feed page the same
+way hues are.
+
+**The register is pastel by construction.** No role is fully saturated and none is
+black: saturation tops out near half, the lit roles sit high on the luminance scale,
+and depth is a soft tonal step rather than a cast shadow — `draw.SHADOW_LIFT`,
+`SHADOW_BLUR` and `SHADOW_OPACITY` scale every direction's request down to a hint that
+one thing is above another.
+
+**There is no container surface, and no motif paints a second ground.** A filled panel
+inside a filled ground is two backgrounds, and the second one is always the weaker
+picture.
 
 **The one rule to get right when writing a direction:** `ink` is the type that reads on
 `page`, `mid` and `lift`; `onink` is the type that reads on `deep` and `accent`. Roles
@@ -323,16 +332,18 @@ vague one never gets chosen well.
 
 ## 8. Adopting a candidate
 
-`DIRECTIONS` holds twenty-five motifs. Ten came from the original set; fifteen more
-were built by the method in §7 and adopted after review:
+`DIRECTIONS` holds twenty-two motifs — ten from the original set and twelve built by
+the method in §7. Three more were built and dropped: a pile of tokens, a field of pins
+and a stack of strata, each of which said the same thing as a motif already in the set
+and said it less clearly.
 
 | device | motifs |
 |---|---|
-| objects, flow, depth | `stack` `flow` `ladder` `glass` `strata` `coins` |
-| a field, a frame, a place | `grid` `split` `matrix` `pins` `compass` |
+| objects and depth | `stack` `glass` `ladder` |
+| flow and sequence | `flow` `track` `funnel` `tree` `pulse` |
+| a field or a frame | `grid` `split` `matrix` `compass` `orbit` |
 | instruments and measures | `gauge` `dial` `bars` `scale` `rings` |
-| sequence and derivation | `track` `funnel` `tree` `route`-like `pulse` |
-| records and marks | `tape` `passport` `seal` `plate` `orbit` |
+| records and marks | `tape` `passport` `seal` `plate` |
 
 New candidates live in `directions_proposed.py` until they have been looked at, because
 adding a direction re-assigns every post in a corpus, not only the posts that take the

@@ -30,7 +30,10 @@ MAX_LABEL = 34
 #: Air a decorative element must leave around a label plate. Effects pressed against
 #: the words is what makes a card feel crowded even when nothing actually overlaps.
 BREATH = 26
-SAFE_BOX = (COVER_PAD, 80, W - 2 * COVER_PAD, H - 160)
+# Exactly the safe area, so a motif that fills its box is correct by construction.
+# It used to start four pixels above the margin and end four below, which every
+# direction then had to compensate for by hand.
+SAFE_BOX = (COVER_PAD, COVER_PAD, W - 2 * COVER_PAD, H - 2 * COVER_PAD)
 
 
 def esc(s):
@@ -224,76 +227,44 @@ def svg(defs, body):
             f'<defs>{defs}</defs>{body}</svg>')
 
 
-#: Inset of the coloured container from the frame, on the `panel` surface.
-PANEL_PAD = 46
-
-
 def ground(p, uid, glow=(760, 300, 520)):
-    """The field every direction sits on, painted the way its surface asks for.
+    """The quiet field every direction sits on.
 
-    `tinted` grounds the whole frame in the post's hue — the original treatment, and
-    what makes a feed of it read as one colour per card. The other three hold the
-    ground neutral and spend the hue on what is drawn upon it, which is a second axis
-    of variety costing no new motifs: the same twenty-five directions on four surfaces
-    are a hundred distinct cards.
+    One flat page with the faintest tonal lift towards the light, and nothing else.
+    The earlier version laid a wide accent ellipse over it, which at any real opacity
+    tinted a white sheet lavender and a dark one violet — the ground ended up carrying
+    the colour that was supposed to belong to what is drawn on it.
     """
     gx, gy, gr = glow
-    surface = p.get("surface", "tinted")
-    light = p.get("light")
-    defs = (f'<linearGradient id="{uid}g" x1="0" y1="0" x2="0.35" y2="1">'
-            f'<stop offset="0" stop-color="{p["mid"] if surface == "tinted" else p["page"]}"/>'
-            f'<stop offset="1" stop-color="{p["page"]}"/></linearGradient>'
-            f'<radialGradient id="{uid}glow" cx="0.5" cy="0.5" r="0.5">'
-            f'<stop offset="0" stop-color="{p["accent"]}" '
-            f'stop-opacity="{0.10 if light else 0.22}"/>'
-            f'<stop offset="0.55" stop-color="{p["accent"]}" '
-            f'stop-opacity="{0.03 if light else 0.06}"/>'
-            f'<stop offset="1" stop-color="{p["accent"]}" stop-opacity="0"/>'
-            f'</radialGradient>'
-            f'<filter id="{uid}grain" x="0" y="0" width="100%" height="100%">'
-            f'<feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" '
-            f'seed="7" result="n"/>'
-            f'<feColorMatrix in="n" type="saturate" values="0"/></filter>')
-    body = (f'<rect width="{W}" height="{H}" fill="url(#{uid}g)"/>'
-            f'<ellipse cx="{gx}" cy="{gy}" rx="{gr}" ry="{gr * 0.82:.0f}" '
-            f'fill="url(#{uid}glow)"/>'
-            f'<rect width="{W}" height="{H}" filter="url(#{uid}grain)" '
-            f'opacity="{0.03 if light else 0.055}"/>')
-    if surface == "panel":
-        defs += (f'<linearGradient id="{uid}pan" x1="0" y1="0" x2="0.4" y2="1">'
-                 f'<stop offset="0" stop-color="{p["mid"]}"/>'
-                 f'<stop offset="1" stop-color="{p["deep"]}"/></linearGradient>')
-        body += panel_shape(p, uid)
+    defs = (f'<radialGradient id="{uid}g" cx="{gx / W:.3f}" cy="{gy / H:.3f}" r="0.9">'
+            f'<stop offset="0" stop-color="{p["faint"] if p.get("light") else p["mid"]}" '
+            f'stop-opacity="0.30"/>'
+            f'<stop offset="1" stop-color="{p["page"]}" stop-opacity="0"/>'
+            f'</radialGradient>')
+    body = (f'<rect width="{W}" height="{H}" fill="{p["page"]}"/>'
+            f'<rect width="{W}" height="{H}" fill="url(#{uid}g)"/>')
     return defs, body
 
 
-def panel_shape(p, uid, pad=PANEL_PAD):
-    """The one saturated container the `panel` surface puts the motif inside."""
-    return (f'<filter id="{uid}pansh" x="-10%" y="-10%" width="130%" height="150%">'
-            f'<feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000" '
-            f'flood-opacity="0.55"/></filter>'
-            f'<g filter="url(#{uid}pansh)">'
-            f'<rect x="{pad}" y="{pad}" width="{W - pad * 2}" height="{H - pad * 2}" '
-            f'rx="30" fill="url(#{uid}pan)"/></g>'
-            f'<rect x="{pad}" y="{pad}" width="{W - pad * 2}" height="{H - pad * 2}" '
-            f'rx="30" fill="none" stroke="{p["hot"]}" stroke-opacity="0.30" '
-            f'stroke-width="1.5"/>')
+def inset_for(p, box):
+    """The motif's box. Kept as a seam so a surface can reshape it without every
+    direction learning about surfaces."""
+    return box
 
 
-def inset_for(p, box, pad=PANEL_PAD):
-    """The motif's box, pulled inside the container when there is one."""
-    if p.get("surface") != "panel":
-        return box
-    x, y, w, h = box
-    left, top = max(x, pad + 34), max(y, pad + 30)
-    right, bottom = min(x + w, W - pad - 34), min(y + h, H - pad - 30)
-    return (left, top, right - left, bottom - top)
+#: Every direction asks for a shadow with its own numbers, from a time when depth was
+#: made of shadow. They are scaled down here rather than in twenty-two call sites, so
+#: the register stays one decision: a shadow is a hint that something is above
+#: something else, not an effect.
+SHADOW_LIFT, SHADOW_BLUR, SHADOW_OPACITY = 0.28, 0.55, 0.22
 
 
 def shadow_def(uid, dy=26, blur=24, op=0.55):
+    """A soft, minimal shadow. The arguments are a direction's intent, not its output."""
     return (f'<filter id="{uid}sh" x="-40%" y="-40%" width="190%" height="200%">'
-            f'<feDropShadow dx="0" dy="{dy}" stdDeviation="{blur}" '
-            f'flood-color="#000" flood-opacity="{op}"/></filter>')
+            f'<feDropShadow dx="0" dy="{dy * SHADOW_LIFT:.1f}" '
+            f'stdDeviation="{blur * SHADOW_BLUR:.1f}" '
+            f'flood-color="#000" flood-opacity="{op * SHADOW_OPACITY:.3f}"/></filter>')
 
 
 def wordmark(p, x=72, y=622, size=19):

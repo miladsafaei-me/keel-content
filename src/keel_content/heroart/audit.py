@@ -19,6 +19,7 @@ card:
 A direction whose idea *is* leaving the frame declares `bleeds = True` and is
 exempted from the safe-area question only — never from the others.
 """
+import math
 import re
 import xml.etree.ElementTree as ET
 
@@ -38,8 +39,13 @@ MIN_EYEBROW = 11
 OBSCURED = 0.22
 #: Text boxes touching by less than this are kerning noise, not a collision.
 TOUCH = 3.0
-#: An element this transparent does not hide what is behind it.
+#: An element this transparent does not hide what is behind it, so nothing can be
+#: said to be printed *on* it.
 SEE_THROUGH = 0.55
+#: But it is still drawn, and still occupies the frame. A field of faint tiles is most
+#: of what a screening grid is; measuring composition without it reported the motif as
+#: filling half the frame it actually covers.
+VISIBLE = 0.10
 #: Text under this opacity is a watermark — several directions set a huge ghost
 #: numeral behind the composition — so it neither collides nor obscures.
 GHOST = 0.4
@@ -50,6 +56,17 @@ MAX_LABEL_CHARS = MAX_LABEL
 #: label is present in the file and absent from the picture. WCAG's large-text
 #: threshold, which every label here clears comfortably when the palette is right.
 MIN_CONTRAST = 3.0
+
+#: How much of the safe area the drawn content has to reach across each axis. Below
+#: this the motif is a small picture marooned in a large frame — the composition is
+#: compressed and the rest of the card is wasted.
+#: Set where a centred motif — a dial, a rose, a ring — can still meet it without
+#: being stretched into something it is not. Pushed higher, every round composition
+#: had to become an ellipse to pass, which is the check dictating the design.
+MIN_SPREAD_X, MIN_SPREAD_Y = 0.74, 0.66
+#: And how close any drawn element may come to the edge of the safe area. Content
+#: pressed against the margin reads as crowded even when it is technically inside.
+EDGE = 4.0
 
 #: All the content text one cover may carry. Four names and a heading is a card; a
 #: paragraph broken into lines is an article, and belongs in the hero.
@@ -295,7 +312,7 @@ def _path_extent(d):
 
 
 def _shape_box(el, chain, grads=None):
-    """A filled shape's box, or None when it cannot hide anything.
+    """A drawn shape's box, or None when nothing is drawn.
 
     `path` and `polygon` come back as `(quad, True)` — approximate, because every
     coordinate in the data is treated as a point on the outline and a control point
@@ -305,23 +322,48 @@ def _shape_box(el, chain, grads=None):
     """
     tag = el.tag.replace(SVG_NS, "")
     fill = (el.get("fill") or "").lower()
-    if fill in ("none", ""):
+    stroked = (el.get("stroke") or "none").lower() not in ("none", "")
+    # A stroked outline is drawn and therefore occupies the frame, but it is not a
+    # surface anything can be printed on. It is measured so composition is judged on
+    # everything visible, flagged approximate so the geometry checks leave it alone,
+    # and given no fill so the contrast check never consults it.
+    if fill in ("none", "") and not stroked:
         return None
-    if _num(el, "opacity", 1.0) * _num(el, "fill-opacity", 1.0) < SEE_THROUGH:
+    alpha = _num(el, "opacity", 1.0) * _num(el, "fill-opacity", 1.0)
+    if alpha < VISIBLE:
         return None
+    faint = alpha < SEE_THROUGH
     if fill.startswith("url(#") and grads is not None and fill[5:].rstrip(")") not in grads:
         return None
-    approx = False
+    approx = faint or fill in ("none", "")
     if tag == "rect":
         x, y = _num(el, "x"), _num(el, "y")
         x1, y1 = x + _num(el, "width"), y + _num(el, "height")
-    elif tag == "circle":
-        cx, cy, r = _num(el, "cx"), _num(el, "cy"), _num(el, "r")
-        x, y, x1, y1 = cx - r, cy - r, cx + r, cy + r
-    elif tag == "ellipse":
+    elif tag in ("circle", "ellipse"):
         cx, cy = _num(el, "cx"), _num(el, "cy")
-        rx, ry = _num(el, "rx"), _num(el, "ry")
-        x, y, x1, y1 = cx - rx, cy - ry, cx + rx, cy + ry
+        if tag == "circle":
+            rx = ry = _num(el, "r")
+        else:
+            rx, ry = _num(el, "rx"), _num(el, "ry")
+        # An ellipse under rotation needs its own extent. Rotating the four corners of
+        # its box instead over-states it badly — a wide ellipse tipped 26 degrees came
+        # out 600 units tall where the shape is 366, which reported a ring as leaving
+        # a frame it sits comfortably inside.
+        turn = math.radians(sum(m[0] for t in chain for kind, m in _ops(t)
+                                if kind == "r"))
+        hw = math.hypot(rx * math.cos(turn), ry * math.sin(turn))
+        hh = math.hypot(rx * math.sin(turn), ry * math.cos(turn))
+        moved = _moved([(cx, cy)], chain)[0]
+        quad = Quad([(moved[0] - hw, moved[1] - hh), (moved[0] + hw, moved[1] - hh),
+                     (moved[0] + hw, moved[1] + hh), (moved[0] - hw, moved[1] + hh)])
+        # This branch returns early, so it has to carry the flag itself — without it a
+        # stroked ring counted as a solid surface and every label crossing one was
+        # reported as landing on something it merely passes over.
+        return (quad, True) if approx else quad
+    elif tag == "line":
+        x, y = _num(el, "x1"), _num(el, "y1")
+        x1, y1 = _num(el, "x2"), _num(el, "y2")
+        approx = True
     elif tag in ("polygon", "polyline"):
         nums = [float(v) for v in re.findall(r"-?\d*\.?\d+", el.get("points", ""))]
         if len(nums) < 4:
@@ -337,7 +379,8 @@ def _shape_box(el, chain, grads=None):
         approx = True
     else:
         return None
-    quad = Quad(_moved([(x, y), (x1, y), (x1, y1), (x, y1)], chain))
+    quad = Quad(_moved([(min(x, x1), min(y, y1)), (max(x, x1), min(y, y1)),
+                        (max(x, x1), max(y, y1)), (min(x, x1), max(y, y1))], chain))
     return (quad, True) if approx else quad
 
 
@@ -360,7 +403,9 @@ def _walk(node, chain, order, texts, shapes, grads=None):
                 approx = isinstance(box, tuple)
                 if approx:
                     box = box[0]
-                shapes.append((order[0], box, el.get("fill", ""), approx))
+                fill = el.get("fill", "")
+                solid = not approx and fill.lower() not in ("none", "")
+                shapes.append((order[0], box, fill if solid else "", approx))
         order[0] += 1
 
 
@@ -474,11 +519,12 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD, page=None):
                 continue
             under = nfill
         else:
-            # Nothing small sits under the word, but a direction whose panels fill the
-            # frame has made those panels the ground. Ask the largest thing that
-            # contains the word before falling back to the page behind everything.
+            # Nothing small sits under the word, but a motif whose object fills most
+            # of the frame has made that object the ground — a printed slip, a field of
+            # panels. Ask the largest filled thing that contains the word before
+            # falling back to the page behind everything.
             wide = [(zs, sfill) for zs, sbox, sfill, ap in shapes
-                    if zs < zt and not ap and sbox.overlap(box) > box.area * 0.92]
+                    if zs < zt and sfill and sbox.overlap(box) > box.area * 0.92]
             under = max(wide, key=lambda item: item[0])[1] if wide else page
 
         # A word the same brightness as what it is printed on is in the file and not
@@ -512,6 +558,29 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD, page=None):
             if sbox.overlap(air) > BREATH * BREATH:
                 faults.append(f"crowds the label plate: {sbox} sits inside its air")
                 break
+
+    # Composition: what the drawn content occupies, against what it was given. Both
+    # failures are spacing failures and they pull in opposite directions — one is
+    # content marooned in the middle of a frame, the other is content shoved against
+    # its edge — so they are measured together from the same box.
+    if kind == "cover" and not bleeds:
+        drawn = [box for _z, box, _c, _s, _f, _fill in texts]
+        drawn += [sbox for _z, sbox, _sf, ap in shapes
+                  if sbox.area < W * H * 0.55 and not ap] or []
+        drawn += [sbox for _z, sbox, _sf, ap in shapes if ap]
+        if drawn:
+            xs = [pt[0] for q in drawn for pt in q.pts]
+            ys = [pt[1] for q in drawn for pt in q.pts]
+            left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
+            span_x = (right - left) / (W - safe_pad * 2)
+            span_y = (bottom - top) / (H - safe_pad * 2)
+            if span_x < MIN_SPREAD_X or span_y < MIN_SPREAD_Y:
+                faults.append(f"content leaves the frame half empty "
+                              f"({span_x:.0%} wide, {span_y:.0%} tall)")
+            if (left < safe_pad - EDGE or right > W - safe_pad + EDGE
+                    or top < safe_pad - EDGE or bottom > H - safe_pad + EDGE):
+                faults.append(f"content presses the margin: "
+                              f"({left:.0f},{top:.0f})-({right:.0f},{bottom:.0f})")
 
     if kind == "cover":
         body = 0

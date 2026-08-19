@@ -132,9 +132,11 @@ class CardStack(Direction):
             return ""
         x, y, w, h = box
         n = s.n
-        band = (132 if big else 70) + variant(s.key, "band", (-8, 0, 10))
-        ch = min(h - (n - 1) * band, 250 if big else 232)
-        cw = min(w * (0.6 if big else 0.72), 620 if big else 396)
+        # The deck is sized from the box: as tall as the fan leaves room for, and
+        # wide enough that the frame is not left half empty around it.
+        band = (118 if big else 64) + variant(s.key, "band", (-6, 0, 8))
+        ch = h - (n - 1) * band
+        cw = w * (0.74 if big else 0.80)
         step_x = (62 if big else 40) * variant(s.key, "fan", (1, -1))
         ox = x + (w - cw - (n - 1) * step_x) / 2
         oy = y + h - ch
@@ -293,16 +295,16 @@ class ChapterPlate(Direction):
         n = s.n or 3
         head = s.head.upper()
         if big:
-            out = txt(880, 640, f"{n}", 700, p["ink"], 700, SERIF, anchor="middle",
-                      op=0.16)
-            out += txt(COVER_PAD, 300, f"{n}", 210, p["ink"], 700, SERIF)
-            wnum = text_width(str(n), 210, SERIF, 700)
-            lx = COVER_PAD + wnum + 26
+            # The numeral is the picture, so it is measured at the size it is drawn
+            # and everything else is placed from that rather than from a guess.
+            out = txt(COVER_PAD, 350, f"{n}", 250, p["accent"], 700, SERIF)
+            wnum = text_width(str(n), 250, SERIF, 700)
+            lx = COVER_PAD + wnum + 30
             if head.startswith("COMPARED"):
-                out += txt(lx, 276, "COMPARED", 34, p["accent"], 700, MONO, ls=3)
+                out += txt(lx, 296, "COMPARED", 34, p["accent"], 700, MONO, ls=3)
             else:
-                out += txt(lx, 250, head, 34, p["accent"], 700, MONO, ls=3)
-                out += txt(lx, 300, "COMPARED", 34, p["dim"], 700, MONO, ls=3)
+                out += txt(lx, 270, head, 34, p["accent"], 700, MONO, ls=3)
+                out += txt(lx, 320, "COMPARED", 34, p["dim"], 700, MONO, ls=3)
             # However many items fit the line whole. Three short names read as a
             # list; three statements read as one sentence cut off, so the count
             # gives way before the text does — and where the items are statements
@@ -317,12 +319,12 @@ class ChapterPlate(Direction):
                         listed = candidate
                         break
             if listed:
-                out += txt_fit(COVER_PAD, 400, listed, room, 30, MIN_LABEL,
+                out += txt_fit(COVER_PAD, 452, listed, room, 30, MIN_LABEL,
                                p["dim"], 500, SANS, op=0.9)
             out += (f'<line x1="{COVER_PAD}" y1="452" x2="{COVER_PAD + 216}" y2="452" '
                     f'stroke="{p["accent"]}" stroke-width="6"/>')
             return out
-        return txt(1010, 560, f"{n}", 560, p["ink"], 700, SERIF, anchor="middle",
+        return txt(1010, 560, f"{n}", 420, p["accent"], 700, SERIF, anchor="middle",
                    op=0.13)
 
     def hero(self, subject, p, uid):
@@ -368,20 +370,22 @@ class TierLadder(Direction):
         x, y, w, h = box
         n = s.n
         label = 32 if big else 19
-        sw = w / (n + 0.9)
+        sw = w / (n + 0.18)
         # Two lines of label plus air have to fit above the tallest step, or the top
         # label is shifted down onto the lit panel — the one bright surface in the
         # picture, and the worst possible ground for white type.
-        band = label * 3.6 + 30
-        lift = abs(math.tan(math.radians(max(9, 9))) * w / 2)
-        rise = min(h / (n + 1.6), (h - band - lift) / (n + 0.15))
-        skew = variant(s.key, "skew", (-9, -7, -5))
+        # The skew tips the staircase about the middle, so it lifts one end and drops
+        # the other by the same amount. Both have to be given back, not one.
+        band = label * 2.7 + 18
+        lift = abs(math.tan(math.radians(6)) * w / 2)
+        rise = (h - band - lift * 2) / (n + 0.15)
+        skew = variant(s.key, "skew", (-6, -5, -4))
         # Skew about the middle of the box rather than its left edge. Skewing from
         # the edge lifts the far side by the full width times the slope, which is
         # what pushed the tallest step's label out of the frame and then, once it was
         # shifted back in, onto the step itself.
         mid = w / 2
-        out = (f'<g transform="translate({x + mid:.0f} {y:.0f}) skewY({skew}) '
+        out = (f'<g transform="translate({x + mid:.0f} {y - lift:.0f}) skewY({skew}) '
                f'translate({-mid:.0f} 0)">')
         for i in range(n - 1, -1, -1):
             k = n - 1 - i
@@ -414,7 +418,7 @@ class TierLadder(Direction):
             # edge actually ended up has to be worked out here. This used to assume
             # a fixed slope while the skew varies per post, which left the label
             # standing on the step for every value but the middle one.
-            by = (y + h - rise * (k + 1.15)
+            by = (y + h - lift - rise * (k + 1.15)
                   + (bx - x - mid) * math.tan(math.radians(skew)))
             # A step label is centred over its own tread and the steps are close
             # together, so its room is roughly one step wide and two lines tall.
@@ -472,7 +476,7 @@ class OrbitSystem(Direction):
         cx, cy = x + w * 0.52, y + h * 0.5
         # The ring is set in from the frame so a satellite has room for its name
         # outside it: the label runs outward, so the gap to the edge is its budget.
-        rx, ry = w * 0.27, h * 0.34
+        rx, ry = w * 0.30, h * 0.36
         label = 30 if big else 18
         rnd = seedof(s.key)
         tip = variant(s.key, "tip", (-26, -16, -6, 8))
@@ -486,12 +490,11 @@ class OrbitSystem(Direction):
                 f'fill="{p["accent"]}" opacity="0.22" filter="url(#{uid}soft)"/>')
         # The core carries a word, so it is sized to hold it rather than to a fixed
         # share of the ring — a long head otherwise hangs off both sides of its own disc.
-        core_w = text_width(clip(s.head, 10).upper(), label * 0.62, MONO, 800)
-        core_r = max(min(rx, ry) * 0.30, core_w / 2 + 16)
+        core_r = min(rx, ry) * 0.28
         out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{core_r:.0f}" '
                 f'fill="url(#{uid}core)"/>')
-        out += txt(cx, cy + label * 0.34, clip(s.head, 10).upper(), label * 0.62, p["deep"],
-                   800, MONO, anchor="middle", ls=1.4)
+        out += txt(x, y + label * 0.7, clip(s.head, 18).upper(), label * 0.48,
+                   p["dim"], 700, MONO, ls=2.6)
         # Satellites are evenly spaced, but where the ring starts decides whether two
         # labels print across each other. So the start angle is chosen rather than
         # taken: candidates are tried in a fixed order and scored on the labels they
@@ -513,15 +516,14 @@ class OrbitSystem(Direction):
                 # label is sized to the room it has instead, which is what `txt_fit`
                 # is for.
                 lead = "start" if ex >= cx else "end"
-                off = dot + 14 if lead == "start" else -(dot + 14)
+                off = dot + 20 if lead == "start" else -(dot + 20)
                 x0 = ex + off if lead == "start" else ex + off - wide
                 spots.append((ex, ey, lead, off))
                 boxes.append((x0, ey - label * 0.8, x0 + wide, ey + label * 0.4))
             # The core is a lit disc with its own label, and a satellite reaching
             # inward prints straight across both, so it takes part in the scoring
             # like the rest. Its glow is the wider of the two and sets the size.
-            core = max(text_width(clip(s.head, 10).upper(), label * 0.62, MONO, 800),
-                       min(rx, ry) * 1.24)
+            core = min(rx, ry) * 1.24
             boxes.append((cx - core / 2, cy - min(rx, ry) * 0.62,
                           cx + core / 2, cy + min(rx, ry) * 0.62))
             return spots, boxes
@@ -645,8 +647,10 @@ class GlassPanels(Direction):
         # spanning four sheets belong to none of them.
         chip = label * 2.2
         step_y = chip + (14 if big else 10)
-        pw = w * (0.55 if big else 0.64)
-        step_x = (w - pw) / max(1, n - 1)
+        pw = w * (0.44 if big else 0.56)
+        swing = abs(math.sin(math.radians(5))) * h / 2
+        pw = min(pw, w - swing * 2)
+        step_x = (w - pw - swing * 2) / max(1, n - 1)
         # The whole arrangement is tilted at the end, and a tilt lifts whatever is
         # furthest from the middle: at this width the top chip rose clean out of the
         # cover's safe area. So the stack gives that lift back before it is laid out.
@@ -662,7 +666,7 @@ class GlassPanels(Direction):
 
         sheets, chips = "", ""
         for i in range(n - 1, -1, -1):
-            px = x + i * step_x
+            px = x + swing + i * step_x
             py = y + lift + (n - 1 - i) * step_y
             front = (i == 0)
             sheets += (f'<g filter="url(#{uid}sh)"><rect x="{px:.0f}" y="{py:.0f}" '
@@ -717,8 +721,8 @@ class ScreeningGrid(Direction):
         # The plate's footprint, plus the air it needs, is known before the field is
         # drawn — so a lit tile is never chosen there. Picking tiles blind is what
         # put a highlight against the plate's edge and another behind a word.
-        plate = (x - 12 - BREATH, yy - label * 1.5 - BREATH,
-                 x - 12 + w * 0.56 + BREATH,
+        plate = (x - BREATH, yy - label * 1.5 - BREATH,
+                 x + w * 0.58 + BREATH,
                  yy - label * 1.5 + len(lines) * label * 1.44 + 60 + BREATH)
 
         def clear(r, c):
@@ -747,15 +751,15 @@ class ScreeningGrid(Direction):
                         f'fill="{p["hot"] if lit else p["mid"]}" '
                         f'opacity="{0.95 if lit else 0.30 + ((rnd >> (r * 3 + c)) % 4) * 0.05}"/>')
         if lines:
-            out += (f'<rect x="{x - 12:.0f}" y="{yy - label * 1.5:.0f}" '
-                    f'width="{w * 0.56:.0f}" '
+            out += (f'<rect x="{x:.0f}" y="{yy - label * 1.5:.0f}" '
+                    f'width="{w * 0.58:.0f}" '
                     f'height="{len(lines) * label * 1.44 + 60:.0f}" rx="16" '
                     f'fill="{p["deep"]}" opacity="0.82"/>')
-            out += txt(x + 20, yy - label * 0.6, f"{s.n} SHORTLISTED", label * 0.42,
+            out += txt(x + 26, yy - label * 0.6, f"{s.n} SHORTLISTED", label * 0.42,
                        p["hot"], 700, MONO, ls=3)
             for i, item in enumerate(lines):
-                out += txt_fit(x + 20, yy + label * 0.9 + i * label * 1.4, item,
-                               w * 0.56 - 44, label, MIN_LABEL,
+                out += txt_fit(x + 26, yy + label * 0.9 + i * label * 1.4, item,
+                               w * 0.58 - 52, label, MIN_LABEL,
                                p["onink"], 700, SANS, op=1 if i == 0 else 0.72)
         return out
 
@@ -831,9 +835,9 @@ class LedgerTape(Direction):
         n = min(4, s.n)
         rowh = 64 if big else 46
         label = 28 if big else 20
-        tw = min(w * (0.62 if big else 0.98), 600 if big else 500)
-        th = min(h, 120 + n * rowh)
-        tx = x + (w - tw) * (0.5 if big else 0.62)
+        tw = w * (0.86 if big else 0.98)
+        th = min(h * 0.84, max(h * 0.76, 120 + n * rowh))
+        tx = x + (w - tw) / 2
         ty = y + (h - th) / 2
         zig = "".join(f"L{tx + i * (tw / 12):.0f} {ty + (8 if i % 2 else 0)} "
                       for i in range(13))
@@ -961,14 +965,14 @@ class NestedRings(Direction):
         col = cx - rmax - 26 - x
         out = ""
         for i in range(n - 1, -1, -1):
-            r = rmax * (1 - i * 0.19)
+            r = rmax * (1 - i * 0.24)
             out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{r:.0f}" '
-                    f'fill="{p["mid"]}" opacity="{0.30 + 0.14 * (n - i)}"/>'
+                    f'fill="{p["accent"] if i == 0 else p["mid"]}" '
+                    f'opacity="{1 if i == 0 else 0.34 + 0.16 * (n - i)}"/>'
                     f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{r:.0f}" fill="none" '
-                    f'stroke="{p["hot"] if i == 0 else p["faint"]}" '
-                    f'stroke-opacity="{0.8 if i == 0 else 0.4}" stroke-width="2"/>')
-        out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{rmax * 0.20:.0f}" '
-                f'fill="url(#{uid}core)"/>')
+                    f'stroke="{p["accent"] if i == 0 else p["dim"]}" '
+                    f'stroke-opacity="{0.9 if i == 0 else 0.45}" stroke-width="2"/>')
+
         size_gap = label * 1.9
         rowh = min(h / n, label * 3.0)
         top = cy - (n - 1) * rowh / 2
@@ -1004,13 +1008,20 @@ class StationTrack(Direction):
         x, y, w, h = box
         n = min(4, s.n)
         label = 30 if big else 18
-        ry = y + h / 2
+        # The stops descend as they advance, so the run uses the height of the frame
+        # as well as its width — a rail across the middle leaves both edges empty.
         step = w / n
-        dot = 15 if big else 10
+        rise = h * 0.40 / max(n - 1, 1)
+        ry0 = y + h * 0.30
+        dot = 19 if big else 12
         # Names alternate above and below the rail. Side by side they would need a
         # full station's width each; alternating gives each one two.
-        out = (f'<rect x="{x:.0f}" y="{ry - 4:.0f}" width="{w:.0f}" height="8" rx="4" '
-               f'fill="url(#{uid}rail)" opacity="0.75"/>')
+        stops = [(x + step * (i + 0.5), ry0 + rise * i) for i in range(n)]
+        out = "".join(
+            f'<line x1="{stops[i][0]:.0f}" y1="{stops[i][1]:.0f}" '
+            f'x2="{stops[i + 1][0]:.0f}" y2="{stops[i + 1][1]:.0f}" '
+            f'stroke="url(#{uid}rail)" stroke-width="7" stroke-linecap="round" '
+            f'opacity="0.8"/>' for i in range(n - 1))
         # A name centred on its stop must stay there: shifting it sideways to keep it
         # in frame walks it into the next stop's name. Its width gives way instead.
         rooms = [min(step * 1.55, 2 * min(x + step * (i + 0.5) - x,
@@ -1019,18 +1030,18 @@ class StationTrack(Direction):
         size, wrapped = fit_all(s.items[:n], rooms, SANS, label, MIN_LABEL,
                                 max_lines=2, weight=700)
         for i in range(n):
-            sx = x + step * (i + 0.5)
+            sx, sy = stops[i]
             up = (i % 2 == 0)
             lit = (i == 0)
-            out += (f'<circle cx="{sx:.0f}" cy="{ry:.0f}" r="{dot * 1.9:.0f}" '
+            out += (f'<circle cx="{sx:.0f}" cy="{sy:.0f}" r="{dot * 1.9:.0f}" '
                     f'fill="{p["accent"] if lit else p["mid"]}" opacity="0.35"/>'
-                    f'<circle cx="{sx:.0f}" cy="{ry:.0f}" r="{dot:.0f}" '
+                    f'<circle cx="{sx:.0f}" cy="{sy:.0f}" r="{dot:.0f}" '
                     f'fill="{p["hot"] if lit else p["dim"]}"/>')
             lines = wrapped[i]
-            base = (ry - dot * 2.6 - (len(lines) - 1) * size * 1.1 if up
-                    else ry + dot * 2.6 + size)
-            out += txt(sx, base - size * 1.5 if up else base + len(lines) * size * 1.1,
-                       f"{i + 1:02d}", size * 0.6,
+            base = (sy - dot * 2.0 - len(lines) * size * 1.1 - size * 0.2 if up
+                    else sy + dot * 2.0 + size * 1.5)
+            tuck = (base + len(lines) * size * 1.1 if up else base - size * 1.35)
+            out += txt(sx, tuck, f"{i + 1:02d}", size * 0.6,
                        p["accent"] if lit else p["dim"], 700, MONO, anchor="middle")
             for j, line in enumerate(lines):
                 out += txt(sx, base + j * size * 1.1, line, size,
@@ -1060,13 +1071,17 @@ class NarrowingFunnel(Direction):
         n = min(4, s.n)
         label = 34 if big else 20
         band = h / n
-        wide = w * 0.36
-        cx = x + wide / 2 + 10
+        wide = w * 0.56
+        cx = x + wide / 2
         out = ""
         # Names run down the right of the funnel, one per band, so a slice never has
         # to carry text across its own sloping edge.
-        col = x + wide + 56
-        size, wrapped = fit_all(s.items[:n], x + w - col, SANS, label, MIN_LABEL,
+        col = x + wide + 36
+        # A two-line name and the next band's number share the gap between bands, so
+        # the type is capped to what leaves room for both rather than to what fits the
+        # column's width.
+        size, wrapped = fit_all(s.items[:n], x + w - col, SANS,
+                                min(label, band * 0.30), MIN_LABEL,
                                 max_lines=2, weight=700)
         for i in range(n):
             top = y + i * band
@@ -1077,8 +1092,9 @@ class NarrowingFunnel(Direction):
                     f'H{cx - wb / 2:.0f} Z" fill="url(#{uid}fn)" '
                     f'opacity="{0.95 - i * 0.16}"/>')
             lines = wrapped[i]
-            base = top + band / 2 - (len(lines) - 1) * size * 0.56
-            out += txt(col, base - size * 0.95, f"{i + 1:02d}", size * 0.6,
+            base = max(top + band / 2 - (len(lines) - 1) * size * 0.56 + size * 0.5,
+                       y + size * 2.3)
+            out += txt(col, base - size * 1.45, f"{i + 1:02d}", size * 0.6,
                        p["accent"] if i == 0 else p["dim"], 700, MONO, ls=1.4)
             for j, line in enumerate(lines):
                 out += txt(col, base + j * size * 1.12, line, size,
@@ -1169,15 +1185,15 @@ class BranchSpine(Direction):
         x, y, w, h = box
         n = min(4, s.n)
         label = 32 if big else 20
-        trunk = x + w * 0.16
+        trunk = x + w * 0.05
         rowh = h / n
         node = 16 if big else 10
         head = label * 1.6
         out = (f'<rect x="{trunk - 8:.0f}" y="{y + head:.0f}" width="16" '
                f'height="{h - head:.0f}" rx="5" fill="url(#{uid}tr)" opacity="0.9"/>')
-        out += txt(trunk, y + head * 0.55, clip(s.head, 14).upper(), label * 0.52,
-                   p["dim"], 700, MONO, anchor="middle", ls=2.4)
-        col = x + w - (trunk + node * 3) - 10
+        out += txt(x, y + head * 0.55, clip(s.head, 16).upper(), label * 0.52,
+                   p["dim"], 700, MONO, ls=2.4)
+        col = w * 0.61 - node * 3 - 34
         size, wrapped = fit_all(s.items[:n], col, SANS, label, MIN_LABEL,
                                 max_lines=2, weight=700)
         for i in range(n):
@@ -1185,71 +1201,24 @@ class BranchSpine(Direction):
             lit = (i == 0)
             # Each branch leaves the trunk on its own row and its name starts where
             # the branch ends, so no two names share a horizontal band.
+            reach = node * 3 + i * (w * 0.34 / max(n - 1, 1))
             out += (f'<path d="M{trunk:.0f} {cy - rowh * 0.36:.0f} '
-                    f'Q{trunk:.0f} {cy:.0f} {trunk + node * 3:.0f} {cy:.0f}" '
+                    f'Q{trunk:.0f} {cy:.0f} {trunk + reach:.0f} {cy:.0f}" '
                     f'fill="none" stroke="{p["hot"] if lit else p["faint"]}" '
                     f'stroke-opacity="{0.9 if lit else 0.5}" stroke-width="3"/>'
-                    f'<circle cx="{trunk + node * 3:.0f}" cy="{cy:.0f}" '
+                    f'<circle cx="{trunk + reach:.0f}" cy="{cy:.0f}" '
                     f'r="{node:.0f}" fill="{p["hot"] if lit else p["dim"]}"/>')
             lines = wrapped[i]
             base = cy - (len(lines) - 1) * size * 0.56 + size * 0.34
+            widest = max(text_width(ln, size, SANS, 700) for ln in lines)
+            lead = trunk + reach + 22 + widest + 14
+            if lead < x + w - 8:
+                out += (f'<line x1="{lead:.0f}" y1="{cy:.0f}" x2="{x + w:.0f}" '
+                        f'y2="{cy:.0f}" stroke="{p["faint"]}" stroke-width="2" '
+                        f'stroke-opacity="0.8" stroke-dasharray="2 8"/>')
             for j, line in enumerate(lines):
-                out += txt(trunk + node * 3 + 22, base + j * size * 1.12, line, size,
+                out += txt(trunk + reach + 22, base + j * size * 1.12, line, size,
                            p["ink"] if lit else p["dim"], 700, SANS)
-        return out
-
-
-class TokenStacks(Direction):
-    """Quantity you could pick up: how much of each, as a physical pile."""
-
-    key = "coins"
-    name = "Token stacks"
-    fits = "amounts, balances and anything counted rather than ranked"
-    #: Three columns, not four: a pile needs width to read as a pile, and the name
-    #: under it needs the same width again.
-    cover_items = 3
-    hero_items = 3
-
-    def defs(self, p, uid, s, big):
-        return (f'<linearGradient id="{uid}cn" x1="0" y1="0" x2="1" y2="0">'
-                f'<stop offset="0" stop-color="{p["accent"]}"/>'
-                f'<stop offset="0.5" stop-color="{p["hot"]}"/>'
-                f'<stop offset="1" stop-color="{p["accent"]}"/></linearGradient>')
-
-    def motif(self, p, uid, s, box, big):
-        if s.n < 2:
-            return ""
-        x, y, w, h = box
-        n = min(4, s.n)
-        label = 30 if big else 19
-        colw = w / n
-        shares = _shares(s, n)
-        peak = max(shares) or 1
-        disc = 21 if big else 13
-        floor = y + h - label * 2.6
-        out = ""
-        # Names sit in a row under the piles, each inside its own column, so the
-        # widest name can never reach the pile or the name beside it.
-        size, wrapped = fit_all(s.items[:n], colw - 20, SANS, label, MIN_LABEL,
-                                max_lines=2, weight=700)
-        for i in range(n):
-            cx = x + colw * (i + 0.5)
-            lit = (i == 0)
-            count = max(2, round(8 * shares[i] / peak))
-            rx = min(colw * 0.40, 92 if big else 52)
-            for k in range(count):
-                cy = floor - 16 - k * disc
-                out += (f'<ellipse cx="{cx:.0f}" cy="{cy:.0f}" rx="{rx:.0f}" '
-                        f'ry="{disc * 0.62:.0f}" '
-                        f'fill="{f"url(#{uid}cn)" if lit else p["lift"]}" '
-                        f'opacity="{1 if lit else 0.62 + k * 0.02}"/>'
-                        f'<ellipse cx="{cx:.0f}" cy="{cy:.0f}" rx="{rx:.0f}" '
-                        f'ry="{disc * 0.62:.0f}" fill="none" stroke="{p["deep"]}" '
-                        f'stroke-opacity="0.35" stroke-width="1"/>')
-            lines = wrapped[i]
-            for j, line in enumerate(lines):
-                out += txt(cx, floor + label * 0.9 + j * size * 1.1, line, size,
-                           p["ink"] if lit else p["dim"], 700, SANS, anchor="middle")
         return out
 
 
@@ -1276,7 +1245,7 @@ class WeighingBeam(Direction):
         peak = max(shares) or 1
         cx = x + w / 2
         top = y + h * 0.16
-        beam = w * 0.78
+        beam = w * 0.92
         tilt = variant(s.key, "beamtilt", (-4, -3, 3, 4))
         out = (f'<path d="M{cx:.0f} {top:.0f} L{cx - 22:.0f} {y + h - 20:.0f} '
                f'H{cx + 22:.0f} Z" fill="{p["mid"]}" opacity="0.7"/>'
@@ -1307,109 +1276,6 @@ class WeighingBeam(Direction):
         return out
 
 
-class PinField(Direction):
-    """Scattered across a territory rather than ranked on a list."""
-
-    key = "pins"
-    name = "Field of pins"
-    fits = "places, jurisdictions, venues — things spread out rather than ordered"
-    cover_items = 3
-    hero_items = 3
-
-    def defs(self, p, uid, s, big):
-        return (f'<radialGradient id="{uid}pin" cx="0.5" cy="0.35" r="0.6">'
-                f'<stop offset="0" stop-color="{p["hot"]}"/>'
-                f'<stop offset="1" stop-color="{p["accent"]}"/></radialGradient>')
-
-    def motif(self, p, uid, s, box, big):
-        if s.n < 2:
-            return ""
-        x, y, w, h = box
-        n = min(4, s.n)
-        label = 30 if big else 19
-        colw = w / n
-        rnd = seedof(s.key)
-        # Contours behind, then one pin per column at a height of its own. Columns
-        # are what keep the names apart; the varied heights are what stop the row
-        # reading as a chart.
-        out = ""
-        for k in range(4):
-            ry = y + h * (0.18 + k * 0.21)
-            out += (f'<path d="M{x:.0f} {ry:.0f} Q{x + w * 0.28:.0f} '
-                    f'{ry - 26 + k * 9:.0f} {x + w * 0.55:.0f} {ry + 8:.0f} '
-                    f'T{x + w:.0f} {ry - 12:.0f}" fill="none" stroke="{p["faint"]}" '
-                    f'stroke-opacity="0.6" stroke-width="2"/>')
-        size, wrapped = fit_all(s.items[:n], colw - 18, SANS, label, MIN_LABEL,
-                                max_lines=2, weight=700)
-        for i in range(n):
-            cx = x + colw * (i + 0.5)
-            lift = [0.30, 0.52, 0.24, 0.46][(i + rnd) % 4]
-            py = y + h * lift
-            lit = (i == 0)
-            r = (26 if big else 15) * (1.22 if lit else 1)
-            out += (f'<path d="M{cx:.0f} {py + r * 2.4:.0f} '
-                    f'C{cx - r * 1.3:.0f} {py + r * 0.7:.0f} {cx - r:.0f} {py:.0f} '
-                    f'{cx:.0f} {py:.0f} C{cx + r:.0f} {py:.0f} {cx + r * 1.3:.0f} '
-                    f'{py + r * 0.7:.0f} {cx:.0f} {py + r * 2.4:.0f} Z" '
-                    f'fill="{f"url(#{uid}pin)" if lit else p["dim"]}" '
-                    f'opacity="{1 if lit else 0.72}"/>'
-                    f'<circle cx="{cx:.0f}" cy="{py + r * 0.15:.0f}" '
-                    f'r="{r * 0.34:.0f}" fill="{p["deep"]}" opacity="0.75"/>')
-            lines = wrapped[i]
-            for j, line in enumerate(lines):
-                out += txt(cx, py + r * 3.6 + j * size * 1.1, line, size,
-                           p["ink"] if lit else p["dim"], 700, SANS, anchor="middle")
-        return out
-
-
-class SteppedStrata(Direction):
-    """Layers in section: what sits under what, cut open."""
-
-    key = "strata"
-    name = "Stepped strata"
-    fits = "a stack of layers, from surface detail down to what underlies it"
-    cover_items = 4
-    hero_items = 4
-    mirrorable = False
-
-    def defs(self, p, uid, s, big):
-        return (f'<linearGradient id="{uid}st" x1="0" y1="0" x2="1" y2="0">'
-                f'<stop offset="0" stop-color="{p["accent"]}"/>'
-                f'<stop offset="1" stop-color="{p["deep"]}"/></linearGradient>')
-
-    def motif(self, p, uid, s, box, big):
-        if s.n < 2:
-            return ""
-        x, y, w, h = box
-        n = min(4, s.n)
-        label = 32 if big else 20
-        bandh = h / n
-        inset = (w * 0.10) / max(1, n - 1)
-        out = ""
-        # Every layer starts further right than the one above, so each keeps a strip
-        # of its own left edge clear. The name goes in that strip, on the layer it
-        # belongs to and never on the layer below.
-        size, wrapped = fit_all(s.items[:n], w * 0.72, SANS, label, MIN_LABEL,
-                                max_lines=1, weight=700)
-        for i in range(n):
-            ly = y + i * bandh
-            lx = x + i * inset
-            lit = (i == 0)
-            out += (f'<rect x="{lx:.0f}" y="{ly:.0f}" width="{x + w - lx:.0f}" '
-                    f'height="{bandh - 8:.0f}" rx="10" '
-                    f'fill="{f"url(#{uid}st)" if lit else p["mid"]}" '
-                    f'opacity="{0.95 if lit else 0.72 - i * 0.10}"/>'
-                    f'<rect x="{lx:.0f}" y="{ly:.0f}" width="{x + w - lx:.0f}" '
-                    f'height="3" fill="{p["hot"]}" '
-                    f'opacity="{0.8 if lit else 0.28}"/>')
-            out += txt(lx + 24, ly + bandh * 0.42, f"{i + 1:02d}", size * 0.56,
-                       p["onink"] if lit else p["ink"], 700, MONO, ls=1.5)
-            out += txt(lx + 24 + size * 1.7, ly + bandh * 0.42,
-                       wrapped[i][0] if wrapped[i] else "", size,
-                       p["onink"] if lit else p["ink"], 700, SANS)
-        return out
-
-
 class SingleDial(Direction):
     """One instrument, read once: the reading is the headline."""
 
@@ -1432,9 +1298,9 @@ class SingleDial(Direction):
         n = min(4, s.n)
         label = 34 if big else 21
         shares = _shares(s, n)
-        cx = x + w / 2
-        cy = y + h * 0.58
-        r = min(h * 0.40, w * 0.26)
+        cx = x + (w * 0.30 if big else w * 0.42)
+        cy = y + h * 0.60
+        r = min(h * 0.58, w * 0.34)
         sweep = 220.0
         start = 180 + (180 - sweep) / 2
 
@@ -1465,16 +1331,19 @@ class SingleDial(Direction):
                 f'fill="{p["hot"]}"/>')
         # The named reading sits under the dial's own pivot, where the face is empty;
         # the rest of the field is the scale, and a scale is numbers, not names.
-        size, lines = fit(s.items[0], w * 0.62, SANS, label * 1.15, MIN_LABEL,
-                          max_lines=2, weight=800)
-        base = cy + (56 if big else 40) + size
-        out += txt(cx, base - size * 1.35, clip(s.head, 14).upper(), size * 0.5,
-                   p["dim"], 700, MONO, anchor="middle", ls=2.4)
+        rx0 = cx + r + (46 if big else 26)
+        room = x + w - rx0
+        size, lines = fit(s.items[0], room, SANS, label * 1.3, MIN_LABEL,
+                          max_lines=3, weight=800)
+        base = cy - (len(lines) - 1) * size * 0.56
+        out += txt(rx0, base - size * 1.15, clip(s.head, 16).upper(), size * 0.46,
+                   p["dim"], 700, MONO, ls=2.4)
         for j, line in enumerate(lines):
-            out += txt(cx, base + j * size * 1.1, line, size, p["ink"], 800, SANS,
-                       anchor="middle")
-        out += txt(cx, y + h * 0.10, f"{n} ON THE SCALE", label * 0.44, p["dim"],
-                   700, MONO, anchor="middle", ls=2.6)
+            out += txt(rx0, base + j * size * 1.12, line, size, p["ink"], 800, SANS)
+        rest = " · ".join(s.items[1:n])
+        if rest:
+            out += txt_fit(rx0, base + len(lines) * size * 1.12 + size * 0.9, rest,
+                           room, size * 0.5, MIN_LABEL, p["dim"], 600, SANS)
         return out
 
 
@@ -1547,8 +1416,10 @@ class CompassRose(Direction):
     mirrorable = False
 
     def defs(self, p, uid, s, big):
+        # The glow used to be the loudest thing in the rose; it now only warms the
+        # middle so the bearings themselves are what the eye follows.
         return (f'<radialGradient id="{uid}rose" cx="0.5" cy="0.5" r="0.5">'
-                f'<stop offset="0" stop-color="{p["hot"]}" stop-opacity="0.7"/>'
+                f'<stop offset="0" stop-color="{p["hot"]}" stop-opacity="0.28"/>'
                 f'<stop offset="1" stop-color="{p["accent"]}" stop-opacity="0"/>'
                 f'</radialGradient>')
 
@@ -1559,28 +1430,45 @@ class CompassRose(Direction):
         n = min(4, s.n)
         label = 30 if big else 19
         cx, cy = x + w / 2, y + h / 2
-        arm = min(h * 0.20, w * 0.16)
+        # The arms and the names they carry share half the frame between them, so
+        # lengthening one shortens the other. These are the pair that fit.
+        arm_x, arm_y = w * 0.26, h * 0.30
+        arm = min(arm_x, arm_y)
         # Four fixed bearings, so the names have four homes that cannot collide:
         # above, below, and one on each side with the frame's whole width to use.
         homes = [(0, -1), (1, 0), (0, 1), (-1, 0)]
         turn = variant(s.key, "bearing", (0, 1, 2, 3))
-        out = (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{arm * 1.5:.0f}" '
+        out = (f'<ellipse cx="{cx:.0f}" cy="{cy:.0f}" rx="{arm_x * 1.10:.0f}" '
+               f'ry="{arm_y * 1.10:.0f}" '
                f'fill="url(#{uid}rose)"/>'
-               f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{arm * 1.15:.0f}" fill="none" '
+               f'<ellipse cx="{cx:.0f}" cy="{cy:.0f}" rx="{arm_x * 0.86:.0f}" '
+               f'ry="{arm_y * 0.86:.0f}" fill="none" '
                f'stroke="{p["faint"]}" stroke-opacity="0.7" stroke-width="2.5"/>')
         # The budget has to allow for the offset the label is pushed out by, or a
         # west-facing name is measured against room it never gets.
-        side = w / 2 - arm * 1.6 - 40
+        side = w / 2 - arm_x * 1.10 - 26
         sizes = []
         for i in range(n):
             dx, dy = homes[(i + turn) % 4]
-            sizes.append(side if dx else w * 0.40)
+            sizes.append(side if dx else w * 0.44)
         size, wrapped = fit_all(s.items[:n], sizes, SANS, label, MIN_LABEL,
                                 max_lines=2, weight=700)
+        # A rose has four points whether or not the article names four things. The
+        # unnamed bearings are still drawn, faintly: without them a three-item card
+        # leaves a quarter of the frame with nothing in it.
+        for spare in range(n, 4):
+            dx, dy = homes[(spare + turn) % 4]
+            reach = arm_x if dx else arm_y
+            out += (f'<path d="M{cx:.0f} {cy:.0f} L{cx + dx * reach - dy * 18:.0f} '
+                    f'{cy + dy * reach + dx * 18:.0f} L{cx + dx * reach * 1.10:.0f} '
+                    f'{cy + dy * reach * 1.10:.0f} L{cx + dx * reach + dy * 18:.0f} '
+                    f'{cy + dy * reach - dx * 18:.0f} Z" fill="{p["faint"]}" '
+                    f'opacity="0.7"/>')
         for i in range(n):
             dx, dy = homes[(i + turn) % 4]
             lit = (i == 0)
-            tipx, tipy = cx + dx * arm, cy + dy * arm
+            reach = arm_x if dx else arm_y
+            tipx, tipy = cx + dx * reach, cy + dy * reach
             out += (f'<path d="M{cx:.0f} {cy:.0f} L{tipx - dy * 16:.0f} '
                     f'{tipy + dx * 16:.0f} L{cx + dx * arm * 1.45:.0f} '
                     f'{cy + dy * arm * 1.45:.0f} L{tipx + dy * 16:.0f} '
@@ -1589,12 +1477,12 @@ class CompassRose(Direction):
                     f'opacity="{1 if lit else 0.7}"/>')
             lines = wrapped[i]
             anchor = "middle" if dx == 0 else ("start" if dx > 0 else "end")
-            lx = cx + dx * (arm * 1.6 + 30)
+            lx = cx + dx * (arm_x * 1.10 + 22)
             block = (len(lines) - 1) * size * 1.12
             if dy == 0:
                 ly = cy - block / 2 + size * 0.3
             else:
-                ly = cy + dy * (arm * 1.6 + size * 1.5) - (block / 2 if dy < 0 else 0)
+                ly = cy + dy * (arm_y * 1.32 + size * 1.5) - (block / 2 if dy < 0 else 0)
                 # The cover box starts four pixels above the safe area, so a clamp
                 # to the box alone leaves a north-facing name just outside it.
                 ly = min(max(ly, y + size * 0.8 + 8),
@@ -1641,7 +1529,7 @@ class SignalRows(Direction):
             out += txt(x, ry + size * 0.34, wrapped[i][0] if wrapped[i] else "", size,
                        p["ink"] if lit else p["dim"], 700, SANS)
             tx = x + gutter
-            tw = x + w - tx
+            tw = x + w - tx - 6
             amp = rowh * (0.30 if lit else 0.20)
             steps = 9
             pts = []
@@ -1682,8 +1570,8 @@ class SealRow(Direction):
         n = min(4, s.n)
         label = 30 if big else 19
         colw = w / n
-        r = min(colw * 0.36, h * 0.24)
-        cy = y + h * 0.36
+        r = min(colw * 0.46, h * 0.40)
+        cy = y + h * 0.34
         out = ""
         size, wrapped = fit_all(s.items[:n], colw - 18, SANS, label, MIN_LABEL,
                                 max_lines=2, weight=700)
@@ -1708,7 +1596,7 @@ class SealRow(Direction):
                        op=1 if lit else 0.82)
             lines = wrapped[i]
             for j, line in enumerate(lines):
-                out += txt(cx, cy + r + label * 1.5 + j * size * 1.1, line, size,
+                out += txt(cx, cy + r + label * 3.4 + j * size * 1.1, line, size,
                            p["ink"] if lit else p["dim"], 700, SANS, anchor="middle")
         return out
 
@@ -1717,9 +1605,8 @@ DIRECTIONS = [
     CardStack(), MoneyFlow(), ChapterPlate(), TierLadder(), OrbitSystem(),
     SplitPanels(), GlassPanels(), ScreeningGrid(), GaugeCluster(), LedgerTape(),
     MeasuredBars(), NestedRings(), StationTrack(), NarrowingFunnel(),
-    QuadrantMatrix(), BranchSpine(), TokenStacks(), WeighingBeam(), PinField(),
-    SteppedStrata(), SingleDial(), RecordCard(), CompassRose(), SignalRows(),
-    SealRow(),
+    QuadrantMatrix(), BranchSpine(), WeighingBeam(), SingleDial(),
+    RecordCard(), CompassRose(), SignalRows(), SealRow(),
 ]
 
 BY_KEY = {d.key: d for d in DIRECTIONS}
