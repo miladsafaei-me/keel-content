@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-content"
-version = "0.2.1"
+version = "0.2.2"
 description = "Keel Content — a reusable, business-blind content-generation pipeline (intake, generator, figures/hero/external-links, glossary authoring) extracted from SignalBots."
 readme = "README.md"
 requires-python = ">=3.11"
