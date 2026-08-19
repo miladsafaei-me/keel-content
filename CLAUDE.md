@@ -11,7 +11,8 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
 ## Boundaries — what is here vs what stays in the host
 
 - **Here (generic engine):** `core/` (Anthropic client, gates, figure/hero/link passes,
-  glossary-gap), the four intake routes, the Twitter funnel models, the generator +
+  glossary-gap), the five intake routes, `crawlmap/` (the crawl-map route's structure
+  recovery, classification and atlas builders), the Twitter funnel models, the generator +
   parsers under `tools/`, the glossary-term authoring commands, and a default prompt set.
 - **Consumed from a sibling package:** the in-body visual catalog + renderer come from
   **keel-ui** (`from keel_ui import render, ...`). keel-content never vendors components.
@@ -20,6 +21,48 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   the monetization render layer (auto-linker, product showcase, asides — the pipeline is
   business-blind by design), the project `content-pipeline/` dir (prompts, config,
   external-domains list), and the brand identity (wordmark, logo mark, palette).
+
+## The crawl-map route — the one route that designs structure, not articles
+
+The other four intake routes all answer the same question in different ways: *which
+article should we write next*. Their output is a worklist of blog/news rows, and
+`contentplan_ingest` deliberately drops every other content type in a workbook.
+
+The crawl-map route answers a different question: **what page types should this site
+have at all, and how should they relate**. It reads a competitor crawl and reports the
+full published surface — broker/product directories, head-to-head comparisons,
+calculators and tools, glossaries, country and regulation pages, landings, hub pages —
+because a site's architecture is decided by that whole surface, not by its blog. A
+route that only ever proposed articles would silently reproduce a blog-shaped site.
+
+Consequences that must not be "simplified" away later:
+
+- Its output is a **page-type map plus a cluster graph**, not a ContentPlan worklist.
+  Article rows are one *derived* slice of it; the landing/tool/directory rows are
+  first-class output that flows to the host's landing pipeline, not to the blog queue.
+- It is **deterministic** — structure recovery, classification and atlas assembly all
+  run without a model call, so mapping a competitor costs no tokens.
+- It is **tiered on purpose.** A competitor corpus is far too large to read; the atlas
+  exists so a planning stage loads a small overview plus the single cluster it is
+  working on. Anything that makes a stage read raw crawl pages defeats the route.
+- The only business-aware input is a **host-supplied vocabulary** (what a "broker" or a
+  "strategy" is for this project). It arrives through config, exactly like every other
+  host reach — never hardcoded here.
+
+Two traps this route already hit, both of which fail *silently* — the run reports
+success and the corpus looks populated, so only a structure count reveals them:
+
+- **An id/class chrome hint must never remove the dominant text block.** Themes name
+  the wrapper that holds the article after the layout it participates in; a container
+  classed `site with-custom-sidebar` matches a "sidebar" hint while carrying the whole
+  page body. Dropping it turned 1,299-word pages into 70-word stubs. `_is_chrome_block`
+  therefore keeps any block above `_CHROME_MAX_SHARE` of the page's text whatever its
+  class says.
+- **A poorer extraction must never overwrite a richer one.** A blocked or challenged
+  refetch still returns HTML — just an empty shell — and a naive write lets that shell
+  replace the good copy recovered from cache. Rank by (headings, words) and keep the
+  best. Related: present a desktop browser identity when re-fetching, or these sites
+  serve the shell in the first place.
 
 ## The one seam — the publisher protocol
 

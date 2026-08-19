@@ -2,7 +2,7 @@
 
 The reusable, **business-blind** content-generation pipeline for Keel projects —
 extracted from SignalBots and neutralized so every project-specific piece is a config
-hook, not hardcoded. It takes topics in through four intake routes, generates
+hook, not hardcoded. It takes topics in through five intake routes, generates
 pipeline-quality articles (with in-body visuals, a bespoke hero image, and a verified
 "Sources & Further Reading" list), and hands the host CMS a **draft**. It does not
 publish, index, or monetize — those are the host's concern.
@@ -16,9 +16,16 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   bundle lint / quality rubric gates, the `[[FIGURE]]`/`[[IMAGE]]` marker passes, the
   `cp-component` embed pass (rendered via **keel-ui**), the internal/external link
   passes, the bespoke hero-SVG builder, and the glossary-gap analysis.
-- **Four intake routes** → one unified queue: top-pages, keyword-clustering, ideation,
-  and YouTube-transcript, plus a Twitter/X funnel (`TwitterSource` + `TweetCandidate`,
-  the only models this package owns) and a glossary-term queue.
+- **Five intake routes** → one unified queue: top-pages, keyword-clustering, ideation,
+  YouTube-transcript, and crawl-map, plus a Twitter/X funnel (`TwitterSource` +
+  `TweetCandidate`, the only models this package owns) and a glossary-term queue.
+  Four of the five propose *articles*; **crawl-map** (`keel_content.crawlmap`) is the
+  one that proposes a *site architecture* — see below.
+- **The crawl-map route** (`keel_content.crawlmap`): reads a competitor crawl and
+  derives the page types a site should have — directories, comparisons, calculators,
+  glossaries, country/regulation pages, landings — not only its blog. It is fully
+  deterministic (no model calls) and emits a tiered map so planning stages read a small
+  overview plus the one cluster they need, instead of the whole corpus.
 - **The generator + parsers** (`keel_content.tools`): the JS generation/brief/reconcile
   workflows and the worklist parsers.
 - **The standalone images pass** (`images.workflow.js` + `export_pending_visuals` /
