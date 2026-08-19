@@ -231,14 +231,27 @@ class MoneyFlow(Direction):
         # thing in the picture and the worst ground for a dim label.
         out += txt(x0 - 20, y + (18 if big else 14), s.head.upper(),
                    14 if big else 11.5, p["dim"], 700, MONO, ls=2.6)
+        # Each name gets an even row of its own, whatever its ribbon's thickness. Hung
+        # off the ribbon's centre, a thin share put its name and its figure inside the
+        # rows of the shares either side.
+        rows = h / max(len(ends), 1)
         for i, (y1, h1) in enumerate(ends):
             out += (f'<rect x="{x1 - 3:.0f}" y="{y1:.1f}" width="6" height="{h1:.1f}" '
                     f'fill="{p["hot"] if i == 0 else p["dim"]}" opacity="0.9"/>')
-            out += txt_fit(x1 + 18, y1 + h1 / 2 + label * 0.34, s.items[i],
+            # The name and its figure are one block, centred in the row, so the last
+            # row's figure cannot drop out of the frame.
+            pair = label * (2.1 if s.weights else 1.0)
+            top = y + rows * i + (rows - pair) / 2
+            ry = top + label * 0.82
+            out += (f'<line x1="{x1 + 3:.0f}" y1="{y1 + h1 / 2:.1f}" '
+                    f'x2="{x1 + 14:.0f}" y2="{ry - label * 0.3:.1f}" '
+                    f'stroke="{p["dim"]}" '
+                    f'stroke-opacity="0.45" stroke-width="1.5"/>')
+            out += txt_fit(x1 + 18, ry + label * 0.34, s.items[i],
                            x + w - x1 - 26, label, MIN_LABEL,
                            p["ink"] if i == 0 else p["dim"], 700, SANS)
             if s.weights:
-                out += txt(x1 + 18, y1 + h1 / 2 + label * 1.45,
+                out += txt(x1 + 18, top + label * 1.9,
                            f"{shares[i] * 100:.0f}%", label * 0.62,
                            p["accent"] if i == 0 else p["dim"], 600, MONO)
         return out
@@ -471,7 +484,11 @@ class OrbitSystem(Direction):
                     f'transform="rotate({tip} {cx:.0f} {cy:.0f})"/>')
         out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{min(rx, ry) * 0.62:.0f}" '
                 f'fill="{p["accent"]}" opacity="0.22" filter="url(#{uid}soft)"/>')
-        out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{min(rx, ry) * 0.30:.0f}" '
+        # The core carries a word, so it is sized to hold it rather than to a fixed
+        # share of the ring — a long head otherwise hangs off both sides of its own disc.
+        core_w = text_width(clip(s.head, 10).upper(), label * 0.62, MONO, 800)
+        core_r = max(min(rx, ry) * 0.30, core_w / 2 + 16)
+        out += (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{core_r:.0f}" '
                 f'fill="url(#{uid}core)"/>')
         out += txt(cx, cy + label * 0.34, clip(s.head, 10).upper(), label * 0.62, p["deep"],
                    800, MONO, anchor="middle", ls=1.4)
@@ -1507,8 +1524,8 @@ class RecordCard(Direction):
                                 max_lines=1, weight=700)
         for i in range(n):
             ry = cy + ch * 0.20 + rows * (i + 0.62)
-            out += txt(cx + 30, ry, f"{i + 1:02d}", size * 0.58, p["hot"], 700, MONO,
-                       ls=1.5)
+            out += txt(cx + 30, ry, f"{i + 1:02d}", size * 0.58, p["ink"], 700, MONO,
+                       ls=1.5, op=0.62)
             out += txt(cx + 30 + size * 1.9, ry, wrapped[i][0] if wrapped[i] else "",
                        size, p["ink"], 700, SANS, op=1 if i == 0 else 0.74)
             if i < n - 1:
