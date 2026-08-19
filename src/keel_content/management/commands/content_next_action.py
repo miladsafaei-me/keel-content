@@ -167,12 +167,12 @@ class Command(BaseCommand):
 
         # Walk the blog rows once: which clusters still hold producible article rows,
         # and which have already produced posts. Both questions drive every step below.
-        blocked, produced, clusters = set(), {}, {}
+        blocked, produced, published, clusters = set(), {}, {}, {}
         for row in (
             ContentPlan.objects.filter(target="blog")
             .exclude(feasibility="human_only")
             .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
-            .select_related("topic_cluster")
+            .select_related("topic_cluster", "produced_post")
         ):
             if not row.topic_cluster_id:
                 continue
@@ -182,6 +182,8 @@ class Command(BaseCommand):
                 blocked.add(slug)
             if row.produced_post_id:
                 produced[slug] = produced.get(slug, 0) + 1
+                if getattr(row.produced_post, "status", None) == "published":
+                    published[slug] = published.get(slug, 0) + 1
 
         # 2. RELINK — a cluster that has just finished producing its articles.
         #    A cluster is only really finished when its blog->blog links are wired, and
@@ -197,14 +199,43 @@ class Command(BaseCommand):
         #    article count it was computed at, so a finished cluster is scheduled once,
         #    and adding a later article to that cluster re-arms it exactly once more.
         #
+        #    IT RE-ARMS ONCE MORE WHEN THE CLUSTER FINISHES GOING LIVE. Production runs
+        #    weeks ahead of the publish quota, so the first pass necessarily wires
+        #    articles that are still drafts, and a draft URL 404s — measured 2026-08-19,
+        #    38 such links across 26 live articles. Re-arming on the PUBLISHED count too
+        #    gives the cluster one final pass against the set a reader can actually
+        #    reach. It is bounded: only a cluster that is fully published qualifies, and
+        #    a fully published cluster's count never moves again, so this can add at
+        #    most one relink per cluster over its whole life. Re-arming on every publish
+        #    instead would have spent one agent run per published post and starved
+        #    production at the quota's 12/day.
+        #
         #    It stays AHEAD of the images pass: relinking rewrites bodies, and doing it
         #    after the images landed would edit prose around freshly placed figures.
         for slug, n in sorted(produced.items(), key=lambda kv: -kv[1]):
             if slug in blocked or n < 2:
                 continue
             marker = (clusters[slug].brief or {}).get("relinked") or {}
-            if marker.get("articles") == n:
+            live = published.get(slug, 0)
+            wired_at_count = marker.get("articles") == n
+            # `published` is absent on markers written before this existed; treating a
+            # missing value as "not yet wired live" is what lets already-finished
+            # clusters get their one live pass instead of being grandfathered out.
+            wired_live = marker.get("published") == live
+            fully_live = live == n
+            if wired_at_count and (wired_live or not fully_live):
                 continue
+            if wired_at_count and fully_live:
+                return self._emit(
+                    action="relink",
+                    cluster=slug,
+                    rows=n,
+                    reason=(
+                        f"cluster '{slug}' has finished publishing (all {n} article(s) "
+                        "are live) and its internal links were wired while some of them "
+                        "were still unpublished drafts"
+                    ),
+                )
             return self._emit(
                 action="relink",
                 cluster=slug,

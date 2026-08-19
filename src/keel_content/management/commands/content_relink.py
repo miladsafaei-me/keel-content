@@ -57,9 +57,24 @@ _MAX_CROSS_CLUSTER_EDGES_PER_ARTICLE = 2
 
 
 def _produced_plans(cluster: str | None):
-    """ContentPlan rows that produced a live post, optionally filtered to one cluster."""
-    qs = ContentPlan.objects.filter(produced_post_id__isnull=False).select_related(
-        "topic_cluster"
+    """ContentPlan rows that produced a post which can reach the live site.
+
+    A shelved row (``scope_relevance >= SCOPE_SHELF_FROM``) is never published — the
+    publish autopilot excludes it by the same test — so a post produced before its row
+    was shelved is a permanent draft. Wiring it into the link graph pointed live
+    articles at a URL that 404s and always would, and spent edges from the plan's
+    per-article ceiling on a dead target. ``human_only`` rows are excluded for the
+    same reason the stamp below excludes them: the loop never produces them, so they
+    are not part of the set the relink gate reasons about.
+
+    Keeping this filter identical to ``_stamp``'s count is what lets the marker and
+    the graph describe the same cluster; they drifted apart once already.
+    """
+    qs = (
+        ContentPlan.objects.filter(produced_post_id__isnull=False)
+        .exclude(feasibility="human_only")
+        .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
+        .select_related("topic_cluster")
     )
     if cluster:
         qs = qs.filter(topic_cluster__name=cluster)
@@ -229,17 +244,32 @@ class Command(BaseCommand):
         if tc is None:
             self.stderr.write(f"cluster {cluster!r} not found — marker not written")
             return
-        produced = (
+        rows = (
             ContentPlan.objects.filter(topic_cluster=tc, target="blog", produced_post__isnull=False)
             .exclude(feasibility="human_only")
             .exclude(scope_relevance__gte=ContentPlan.SCOPE_SHELF_FROM)
-            .count()
+            .select_related("produced_post")
+        )
+        produced = rows.count()
+        # The published count re-arms the pass ONCE MORE, when the cluster finishes
+        # going live. Production runs weeks ahead of the publish quota, so the graph
+        # written here necessarily links articles that are still drafts, and a draft
+        # URL 404s: measured 2026-08-19, 38 such links sat in 26 live articles. Those
+        # heal as the targets publish, but the anchor text was chosen against a set
+        # that was only partly live, so one pass over the fully-live cluster is what
+        # makes the graph describe what a reader can actually reach. It cannot loop:
+        # the gate re-arms on a CHANGED count, and a fully-published cluster's count
+        # stops moving.
+        published = sum(
+            1 for r in rows if r.produced_post and r.produced_post.status == "published"
         )
         brief = dict(tc.brief or {})
-        brief["relinked"] = {"articles": produced}
+        brief["relinked"] = {"articles": produced, "published": published}
         tc.brief = brief
         tc.save(update_fields=["brief"])
-        self.stdout.write(f"marked {tc.slug} relinked at {produced} article(s)")
+        self.stdout.write(
+            f"marked {tc.slug} relinked at {produced} article(s), {published} published"
+        )
 
     def _apply(
         self,

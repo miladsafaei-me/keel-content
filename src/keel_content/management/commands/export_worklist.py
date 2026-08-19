@@ -49,6 +49,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce
 
+from keel_content.core.scope import PRIORITY_BUCKET
 from keel_content.host import content_plan_model, market_hubs
 
 # Command modules import only when a command runs (apps already populated), so
@@ -421,17 +422,38 @@ class Command(BaseCommand):
         mean scope-relevance level of its producible rows (the 3-question model,
         BUSINESS.md §2; an ungraded NULL row counts as 3); the lowest mean — the most
         L1/L2 content — wins. Shelf rows are already excluded from ``qs`` upstream.
+
+        The mean is compared in HALF-LEVEL BUCKETS, exactly as
+        ``scope.cluster_priority`` does it, because shelving lifts a cluster's raw
+        mean: a 3-row remnant of an otherwise shelved cluster scores 1.00 and jumps
+        ahead of a whole 13-row cluster at 1.05. Inside a bucket the larger cluster
+        wins, so equally on-scope work is built most-complete-first. This screen and
+        that in-loop scorer MUST agree — they are the claim path and the read path of
+        one decision, and a cluster the brain picks but the claimer skips exports an
+        empty worklist, which the driver scores as no progress.
+
         Ties break toward the larger cluster, then name, for determinism.
         ``--cluster <slug>`` is the operator's manual override.
         """
         mean_scope = Avg(Coalesce("scope_relevance", Value(3)), output_field=FloatField())
-        return (
+        rows = (
             qs.exclude(topic_cluster__isnull=True)
             .values("topic_cluster__slug", "topic_cluster__name")
             .annotate(mean_scope=mean_scope, n_rows=Count("pk"))
-            .order_by("mean_scope", F("n_rows").desc(), "topic_cluster__name")
-            .first()
         )
+        # Bucketed in Python, not SQL: this list is one entry per CLUSTER, so
+        # materializing it is cheap, and the arithmetic stays byte-identical to the
+        # shared policy instead of being re-expressed as a database rounding
+        # expression that could quietly drift from it.
+        ranked = sorted(
+            rows,
+            key=lambda r: (
+                round(r["mean_scope"] / PRIORITY_BUCKET) * PRIORITY_BUCKET,
+                -r["n_rows"],
+                r["topic_cluster__name"] or "",
+            ),
+        )
+        return ranked[0] if ranked else None
 
     @transaction.atomic
     def _select_and_claim(self, statuses, targets, opts):

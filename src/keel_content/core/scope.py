@@ -36,6 +36,11 @@ def scope_weight_case(field: str = "scope_relevance") -> Case:
     return Case(*whens, default=Value(UNGRADED_WEIGHT), output_field=FloatField())
 
 
+# Mean levels are compared in half-level buckets, not as raw floats. See
+# ``cluster_priority`` — this is the width of "the same scope tier".
+PRIORITY_BUCKET = 0.5
+
+
 def cluster_priority(rows) -> tuple[float, int]:
     """Production-priority sort key for one cluster — SCOPE-RELEVANCE ONLY.
 
@@ -43,14 +48,27 @@ def cluster_priority(rows) -> tuple[float, int]:
     builds first (Milad, 2026-08-09): the only criterion is the cluster's scope
     relevance (the 3-question model, BUSINESS.md §2). ``rows`` is the cluster's
     producible ContentPlan rows; the returned key is ordered so **smaller is higher
-    priority** — ``(mean scope level, -row count)``. The mean level counts a shelved
-    row (scope_weight 0) not at all and an ungraded (NULL) row as 3; the larger
-    on-scope cluster wins an exact tie. Pick the next cluster with ``min(..., key=)``.
+    priority** — ``(mean scope level bucketed to PRIORITY_BUCKET, -row count)``. The
+    mean counts a shelved row (scope_weight 0) not at all and an ungraded (NULL) row
+    as 3. Pick the next cluster with ``min(..., key=)``.
+
+    THE MEAN IS BUCKETED BECAUSE A RAW MEAN REWARDS FRAGMENTS (Milad, 2026-08-19).
+    Shelved rows are dropped before the mean is taken, so shelving IMPROVES a
+    cluster's rank: a cluster of 3 L1 rows and 40 shelved ones scores a perfect 1.00
+    and outranked a 13-row cluster at 1.05, while delivering three articles. That is
+    backwards for both halves of the pipeline — a topic cluster earns its internal
+    links by being a complete hub-and-spoke set, and three articles do not make one.
+    Comparing half-level buckets keeps scope strictly first (an L1 tier always beats
+    an L2 tier) while letting the row count decide inside a tier, so the larger, more
+    complete cluster is built and published first among equally on-scope work.
     """
     levels = [
         3 if r.scope_relevance is None else int(r.scope_relevance)
         for r in rows
         if scope_weight(r.scope_relevance) > 0
     ]
-    mean = (sum(levels) / len(levels)) if levels else 99.0
-    return (mean, -len(levels))
+    if not levels:
+        return (99.0, 0)
+    mean = sum(levels) / len(levels)
+    bucket = round(mean / PRIORITY_BUCKET) * PRIORITY_BUCKET
+    return (bucket, -len(levels))
