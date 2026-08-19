@@ -31,7 +31,7 @@ p.note { margin:0 20px 14px; color:#7b8697; font-size:13px; max-width:70ch; }
 
 
 def contact_sheet(directions, subjects, out_path, title="Direction preview",
-                  kind="cover", hues=None):
+                  kind="cover", hues=None, surfaces=None):
     """One row per direction, one column per subject, faults printed under each.
 
     `directions` is a list of Direction instances, `subjects` a list of Subject. The
@@ -39,6 +39,7 @@ def contact_sheet(directions, subjects, out_path, title="Direction preview",
     works in violet is a motif that does not work.
     """
     hues = hues or [HUE_WHEEL[(i * 9) % len(HUE_WHEEL)] for i in range(len(subjects))]
+    surfaces = surfaces or ["tinted"] * len(subjects)
     out = [f"<style>{PAGE_CSS}</style><h1>{html.escape(title)}</h1>",
            f'<p class="note">{len(directions)} directions &times; {len(subjects)} '
            f'unlike subjects, at {kind} size. Anything the layout audit flags is '
@@ -49,12 +50,12 @@ def contact_sheet(directions, subjects, out_path, title="Direction preview",
                    f"<span style='text-transform:none;font-weight:400'>"
                    f"&middot; {html.escape(d.fits)}</span></h2>")
         out.append('<div class="row">')
-        for subject, hue in zip(subjects, hues):
-            colours = palette(hue)
+        for subject, hue, surface in zip(subjects, hues, surfaces):
+            colours = palette(hue, surface)
             uid = f"p{seedof(d.key + subject.key) % 999983}_"
             svg = (d.cover(subject, colours, uid) if kind == "cover"
                    else d.hero(subject, colours, uid))
-            faults = check(svg, kind=kind, bleeds=d.bleeds)
+            faults = check(svg, kind=kind, bleeds=d.bleeds, page=colours["ground"])
             total_faults += len(faults)
             out.append(f'<div><div class="c">{svg}</div>'
                        f'<div class="m">hue {hue} &middot; {html.escape(subject.key)}</div>'

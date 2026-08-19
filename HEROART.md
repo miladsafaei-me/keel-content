@@ -149,6 +149,7 @@ polygon using the same metrics that placed it, and asks:
 | lands on a surface that is not its own | the nearest surface under a word is not the plate that backs it — a lit panel, a tile from the field behind |
 | crowds the label plate | a loose decoration parked inside a plate's air (`BREATH`) |
 | type too small | a content label under `MIN_LABEL`; mono eyebrows have their own floor |
+| too little contrast | a word within `MIN_CONTRAST` of what it is printed on — present in the file, absent from the picture |
 | label too long / too much text on the card | a cover being read rather than seen |
 
 Run it on its own against any SVG:
@@ -157,6 +158,13 @@ Run it on its own against any SVG:
 from keel_content.heroart import check
 faults = check(svg_text, kind="cover", bleeds=False)
 ```
+
+The contrast check resolves gradient fills to their mean stop colour, because almost
+every fill in these images is a gradient and a check that gives up on `url(#…)` gives
+up on the pairings it exists to catch. It ignores a gradient that is mostly
+transparent — a wash over what is behind it is not a surface — and it holds an
+approximate `path` or `polygon` box to a higher overlap before treating it as the
+ground under a word, since a curve's box overstates it.
 
 ### Four things it took a wrong answer to learn
 
@@ -202,6 +210,41 @@ A `--manifest` of `{slug: {direction, world|hue}}` overrides any pick by hand.
 > balancing pass had to overrule 93 of their choices anyway. Rules that encode the same
 > reasoning cost nothing, run in milliseconds over the whole corpus, are reviewable, and
 > stay stable across runs.
+
+## 5b. Surfaces: the second axis
+
+A palette has two independent decisions — which hue, and **what the hue is allowed to
+touch**. The second is the surface, and it is where variety comes from without a single
+new motif: twenty-five directions on four surfaces are a hundred distinct cards.
+
+| surface | ground | where the hue goes |
+|---|---|---|
+| `tinted` | the post's hue, with a soft light of the same hue | everything, ground included |
+| `slate` | neutral near-black, no glow | the elements, vividly |
+| `paper` | neutral near-white, no glow | the elements, on a light sheet |
+| `panel` | neutral graphite | one saturated container the motif sits inside |
+
+`tinted` is the original treatment and the reason a feed of it reads as one colour per
+card however much the hue moves: the ground carries the hue, so the hue is the card.
+The other three hold the ground neutral. Surfaces are spread across the feed page the
+same way hues are, and a direction whose idea is running to the frame is never given
+the container surface, because a container is exactly what that idea gives up.
+
+**The one rule to get right when writing a direction:** `ink` is the type that reads on
+`page`, `mid` and `lift`; `onink` is the type that reads on `deep` and `accent`. Roles
+keep their names across all four surfaces while their values flip, so a plate that was
+dark under light type becomes light under light type — which is why the audit checks
+contrast rather than trusting the author. Two corollaries learned the same way:
+
+* **A structure colour is not a type colour.** `faint` and `dim` exist to sit behind
+  content; on a light ground they are a pale word on a pale sheet.
+* **An object's gradient must stay in one tonal band.** A fill running from the
+  lightest role to the darkest has no single text colour that can be read across it, so
+  it fails on whichever end the author was not looking at.
+
+Two `p` keys a direction may read beyond the roles: `p["light"]`, true only on `paper`,
+for the rare element that must invert; and `p["ground"]`, what content is effectively
+drawn over, which is the container rather than the page on `panel`.
 
 ## 6. Keeping a feed from looking like one article repeated
 
@@ -278,41 +321,32 @@ of them were invisible to the audit too.
 add it to `DIRECTIONS`. `fits` is what the scorer's routing is documented against, so a
 vague one never gets chosen well.
 
-## 8. The candidate set
+## 8. Adopting a candidate
 
-[`directions_proposed.py`](src/keel_content/heroart/directions_proposed.py) holds
-fifteen more directions, built by the method above and audited clean, but **not
-registered in `DIRECTIONS`**. Adding a direction re-assigns every post in a corpus, not
-only the posts that take the new motif, so a candidate waits until it has been looked
-at and wanted.
+`DIRECTIONS` holds twenty-five motifs. Ten came from the original set; fifteen more
+were built by the method in §7 and adopted after review:
 
-| key | device it starts from |
+| device | motifs |
 |---|---|
-| `bars` | measured length |
-| `rings` | nested scope |
-| `track` | sequence along a line |
-| `funnel` | attrition |
-| `matrix` | two-axis position |
-| `tree` | derivation from one source |
-| `coins` | physical quantity |
-| `scale` | weighing |
-| `pins` | place |
-| `strata` | depth, in section |
-| `dial` | a single instrument reading |
-| `passport` | an official record |
-| `compass` | bearing |
-| `pulse` | shape over time |
-| `seal` | certification |
+| objects, flow, depth | `stack` `flow` `ladder` `glass` `strata` `coins` |
+| a field, a frame, a place | `grid` `split` `matrix` `pins` `compass` |
+| instruments and measures | `gauge` `dial` `bars` `scale` `rings` |
+| sequence and derivation | `track` `funnel` `tree` `route`-like `pulse` |
+| records and marks | `tape` `passport` `seal` `plate` `orbit` |
 
-To adopt one, move its class into `directions.py`, add it to `DIRECTIONS`, and give it
-head-word routing in `choose.HEAD_MAP` if it should be reachable without a manifest.
+New candidates live in `directions_proposed.py` until they have been looked at, because
+adding a direction re-assigns every post in a corpus, not only the posts that take the
+new motif. Adopting one means moving its class into `directions.py`, adding it to
+`DIRECTIONS`, and giving it head-word routing in `choose.HEAD_MAP` if it should be
+reachable without a manifest.
 
-Preview any set against unlike subjects with the harness the method's step 7 describes:
+Preview any set against unlike subjects and surfaces with the harness §7 step 7 asks
+for:
 
 ```python
 from keel_content.heroart.preview import contact_sheet
-from keel_content.heroart.directions_proposed import PROPOSED
-contact_sheet(PROPOSED, subjects, "/tmp/candidates.html")   # returns the fault count
+contact_sheet(DIRECTIONS, subjects, "/tmp/sheet.html",
+              surfaces=["tinted", "slate", "paper", "panel"])   # returns the fault count
 ```
 
 The hue changes per column on purpose: a motif that only works in violet is a motif

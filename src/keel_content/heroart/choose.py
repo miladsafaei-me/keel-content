@@ -27,7 +27,7 @@ import json
 import pathlib
 
 from .draw import seedof
-from .worlds import allocate
+from .worlds import allocate, allocate_surfaces
 
 #: No direction may hold more than this share of a corpus...
 CAP_SHARE = 0.18
@@ -211,7 +211,12 @@ def fallback_direction(subject, keys, role=""):
     return max(keys, key=lambda k: score(subject, k, role))
 
 
-def assign(entries, keys, order=None):
+#: Directions whose idea is running to the frame, which is exactly what a container
+#: surface takes away from them.
+NO_CONTAINER = ("split", "plate")
+
+
+def assign(entries, keys, order=None, surfaces=("tinted",)):
     """Assign a direction and a hue to every item, spread across the corpus.
 
     `entries` is a list of (subject, cluster, role). `order` is the slugs in the
@@ -308,8 +313,12 @@ def assign(entries, keys, order=None):
 
     # Hue last, walked in feed order rather than per post, so the colours a reader
     # sees together are the ones held apart.
-    hues = allocate(sorted(out, key=lambda slug: at[slug]))
-    return {slug: (direction, hues[slug]) for slug, direction in out.items()}
+    walk = sorted(out, key=lambda slug: at[slug])
+    hues = allocate(walk)
+    skins = allocate_surfaces([(slug, out[slug]) for slug in walk], list(surfaces),
+                              blocked={"panel": NO_CONTAINER})
+    return {slug: (direction, hues[slug], skins[slug])
+            for slug, direction in out.items()}
 
 
 def load_manifest(path):

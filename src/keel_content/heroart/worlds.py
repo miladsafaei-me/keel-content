@@ -77,25 +77,115 @@ def _hex_at(hue, sat, target):
     return "#%02x%02x%02x" % (int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5))
 
 
-#: role -> (saturation, target luminance). The luminances are those of the original
-#: violet palette, so the whole wheel now matches the tone that was signed off.
-ROLES = dict(
-    deep=(0.42, 0.0045),
-    mid=(0.46, 0.0180),
-    lift=(0.46, 0.0430),
-    ink=(0.55, 0.8600),
-    dim=(0.32, 0.4450),
-    faint=(0.22, 0.1250),
-    accent=(0.72, 0.2450),
-    hot=(0.86, 0.5600),
-)
+#: A palette has two independent decisions: which hue, and what the hue is allowed to
+#: touch. The second is the surface.
+#:
+#: `tinted` puts the hue in everything, ground included — the original treatment, and
+#: the reason a feed of it reads as one colour per card however much the hue moves.
+#: The other three hold the ground neutral and spend the hue on what is drawn on it:
+#: `slate` on a near-black page, `paper` on a near-white one, and `panel` on a
+#: near-black page carrying one saturated container that the motif sits inside.
+#:
+#: The pairing that holds on every surface, and the one thing to get right when
+#: writing a direction: `ink` is the type that reads on `page`, `mid` and `lift`;
+#: `onink` is the type that reads on `deep` and `accent`. Pick from the wrong pair and
+#: the label is in the file and not in the picture — on one surface only, which is why
+#: the audit checks contrast rather than trusting the author.
+#:
+#: Roles keep their meaning across all four — `ink` is always the text that reads on
+#: the page, `onink` always the text that reads on a `deep` or `accent` fill. On a dark
+#: surface those are the same colour; on `paper` they are opposites, which is exactly
+#: the mistake the audit's contrast check exists to catch.
+SURFACES = {
+    "tinted": dict(
+        page=(0.42, 0.0045), deep=(0.42, 0.0045), mid=(0.46, 0.0180),
+        lift=(0.46, 0.0430), ink=(0.55, 0.8600), onink=(0.55, 0.8600),
+        dim=(0.32, 0.4450), faint=(0.22, 0.1250), accent=(0.72, 0.2450),
+        hot=(0.86, 0.5600),
+    ),
+    "slate": dict(
+        page=(0.00, 0.0100), deep=(0.06, 0.0180), mid=(0.55, 0.0700),
+        lift=(0.62, 0.1500), ink=(0.06, 0.8600), onink=(0.06, 0.8600),
+        dim=(0.16, 0.4200), faint=(0.10, 0.1100), accent=(0.85, 0.3200),
+        hot=(0.92, 0.6000),
+    ),
+    "paper": dict(
+        page=(0.03, 0.9000), deep=(0.70, 0.0400), mid=(0.45, 0.5000),
+        lift=(0.34, 0.6800), ink=(0.30, 0.0300), onink=(0.06, 0.9200),
+        dim=(0.30, 0.1800), faint=(0.16, 0.7000), accent=(0.85, 0.1500),
+        hot=(0.88, 0.3000),
+    ),
+    "panel": dict(
+        page=(0.02, 0.0620), deep=(0.55, 0.0060), mid=(0.60, 0.0280),
+        lift=(0.58, 0.0600), ink=(0.55, 0.8600), onink=(0.55, 0.8600),
+        dim=(0.32, 0.4450), faint=(0.24, 0.1300), accent=(0.80, 0.2600),
+        hot=(0.88, 0.5600),
+    ),
+}
+#: How much of the hue the ground itself is allowed to carry as a soft light. It is
+#: the glow, not the page colour, that made the neutral surfaces still read as one
+#: colour per card: a wide accent ellipse at any real opacity tints a white sheet
+#: lavender and a black one violet.
+GLOW = {"tinted": 1.0, "slate": 0.0, "paper": 0.0, "panel": 0.30}
+
+DEFAULT_SURFACE = "tinted"
+
+#: Surfaces that hold the ground neutral. The container surface is listed here too:
+#: its page is neutral even though what sits on it is not.
+NEUTRAL = ("slate", "paper", "panel")
 
 
-def palette(hue):
-    """The nine roles at one hue, matched to a fixed tonal register."""
-    out = {role: _hex_at(hue, sat, target) for role, (sat, target) in ROLES.items()}
+def palette(hue, surface=DEFAULT_SURFACE):
+    """The palette roles at one hue, on one surface, in one tonal register."""
+    roles = SURFACES.get(surface, SURFACES[DEFAULT_SURFACE])
+    out = {role: _hex_at(hue, sat, target) for role, (sat, target) in roles.items()}
     out["good"] = GOOD
     out["hue"] = hue
+    out["surface"] = surface
+    out["light"] = surface == "paper"
+    out["glow"] = GLOW.get(surface, 1.0)
+    # What the content is actually drawn over, which is not always the page: on the
+    # container surface the motif sits on the container, and judging its contrast
+    # against the sheet behind would measure the wrong pair.
+    out["ground"] = out["mid"] if surface == "panel" else out["page"]
+    return out
+
+
+def luminance(hex_colour):
+    """Relative luminance of a #rrggbb string, for contrast checks."""
+    h = hex_colour.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    try:
+        rgb = tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    except ValueError:
+        return None
+    return _luma(rgb)
+
+
+def allocate_surfaces(order, choices, page=PAGE, blocked=()):
+    """Give every slug a surface, mixed within each page of the feed.
+
+    The surface is a second axis of variety and behaves like the first: spread it over
+    the page the reader opens, not over the corpus. Each page walks the choices in a
+    rotating order so no page is all one treatment and no two consecutive pages start
+    on the same one.
+
+    `blocked` is {surface: {direction keys}} for pairings that contradict themselves —
+    a direction whose idea is running to the frame has nothing to say inside a
+    container — and those fall back to the first choice.
+    """
+    out = {}
+    if len(choices) < 2:
+        return {slug: choices[0] for slug, _d in order}
+    for index in range(0, len(order), page):
+        block = order[index:index + page]
+        start = (index // page) % len(choices)
+        for i, (slug, direction) in enumerate(block):
+            pick = choices[(start + i) % len(choices)]
+            if direction in blocked.get(pick, ()):
+                pick = choices[0]
+            out[slug] = pick
     return out
 
 

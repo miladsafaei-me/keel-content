@@ -152,6 +152,8 @@ def main(argv=None, paths=None):
     ap.add_argument("--out-dir", help="write everything here instead of media/")
     ap.add_argument("--og", action="store_true", help="also write the 1200px OG raster")
     ap.add_argument("--report", help="write a JSON report of every choice made")
+    ap.add_argument("--surfaces", nargs="*",
+                    help="grounds to spread across the feed (tinted slate paper panel)")
     ap.add_argument("--faults", help="write every layout fault to this file")
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero when the layout audit finds anything")
@@ -208,11 +210,12 @@ def main(argv=None, paths=None):
         if args.limit and len(pending) >= args.limit:
             break
 
-    assigned = assign(pending, sorted(valid), order=order)
+    assigned = assign(pending, sorted(valid), order=order,
+                      surfaces=tuple(args.surfaces or ("tinted",)))
     report, faults = [], []
     for subject, _cluster, _role in pending:
         slug = subject.key
-        key, hue = assigned[slug]
+        key, hue, surface = assigned[slug]
         source = "auto"
         entry = manifest.get(slug) or {}
         if entry.get("direction") in valid:
@@ -222,20 +225,22 @@ def main(argv=None, paths=None):
         if isinstance(entry.get("hue"), int):
             hue = entry["hue"]
         direction = BY_KEY[key]
-        colours = palette(hue)
+        colours = palette(hue, surface)
         hero_svg = direction.hero(subject, colours, f"h{seedof(slug) % 999983}_")
         cover_svg = direction.cover(subject, colours, f"c{seedof(slug) % 999983}_")
         # Check the image that was produced, not the intent behind it: every layout
         # fault this project shipped was a relationship between two elements that
         # neither call site could see.
         for kind, markup in (("cover", cover_svg), ("hero", hero_svg)):
-            for fault in audit.check(markup, kind=kind, bleeds=direction.bleeds):
+            for fault in audit.check(markup, kind=kind, bleeds=direction.bleeds,
+                                     page=colours["ground"]):
                 faults.append(f"{slug} [{key} {kind}] {fault}")
         (hero_dir / f"{slug}.svg").write_text(hero_svg, encoding="utf-8")
         (card_dir / f"{slug}.svg").write_text(cover_svg, encoding="utf-8")
         if args.og:
             rasterise(chrome, hero_dir / f"{slug}.svg", og_dir / f"{slug}.jpg")
-        report.append(dict(slug=slug, direction=key, hue=hue, source=source,
+        report.append(dict(slug=slug, direction=key, hue=hue, surface=surface,
+                           source=source,
                            items=subject.n, weights=bool(subject.weights)))
     count = len(report)
 
@@ -247,6 +252,7 @@ def main(argv=None, paths=None):
           + (f", skipped {len(skipped)} with no usable subject" if skipped else ""))
     print("directions:", dict(Counter(r["direction"] for r in report)))
     print("distinct hues:", len({r["hue"] for r in report}), "of", count)
+    print("surfaces:", dict(Counter(r["surface"] for r in report)))
     if order:
         print("feed spread:", feed_spread(report, order))
     print("hand-pinned by manifest:", sum(1 for r in report if r["source"] == "manifest"))

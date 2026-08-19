@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 
 from .constants import H, MONO, SANS, SERIF, W
 from .draw import BREATH, COVER_PAD, MAX_LABEL, text_width
+from .worlds import luminance
 
 SVG_NS = "{http://www.w3.org/2000/svg}"
 
@@ -45,6 +46,11 @@ GHOST = 0.4
 #: Longest a content label may be on a cover — shared with the renderer so the check
 #: and the thing it checks cannot drift apart.
 MAX_LABEL_CHARS = MAX_LABEL
+#: Least contrast a word may have against what it is printed on. Below this the
+#: label is present in the file and absent from the picture. WCAG's large-text
+#: threshold, which every label here clears comfortably when the palette is right.
+MIN_CONTRAST = 3.0
+
 #: All the content text one cover may carry. Four names and a heading is a card; a
 #: paragraph broken into lines is an article, and belongs in the hero.
 MAX_COVER_CHARS = 150
@@ -244,18 +250,68 @@ def _text_box(el, chain):
     return Quad(_moved(corners, chain)), content, size, fam
 
 
-def _shape_box(el, chain):
-    """A filled shape's box, or None when it cannot hide anything."""
+#: How many numbers each path command takes, and which of them are a point. `H` and
+#: `V` take one number that is an x or a y alone — reading a path as alternating x,y
+#: pairs mis-assigns every coordinate after the first of those, which inflates the
+#: box in the wrong direction and reports collisions that are not there.
+PATH_ARITY = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "S": 4, "Q": 4, "C": 6, "A": 7,
+              "Z": 0}
+
+
+def _path_extent(d):
+    """Bounding extent of a path's on-curve points, or None if it cannot be read."""
+    tokens = re.findall(r"[MmLlHhVvCcSsQqTtAaZz]|-?\d*\.?\d+(?:e-?\d+)?", d or "")
+    xs, ys, cx, cy, cmd = [], [], 0.0, 0.0, None
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t.isalpha():
+            cmd, i = t, i + 1
+            if cmd in "Zz":
+                continue
+        if cmd is None:
+            return None
+        arity = PATH_ARITY.get(cmd.upper())
+        if not arity or i + arity > len(tokens):
+            return None
+        try:
+            args = [float(v) for v in tokens[i:i + arity]]
+        except ValueError:
+            return None
+        i += arity
+        rel = cmd.islower()
+        if cmd.upper() == "H":
+            cx = cx + args[0] if rel else args[0]
+        elif cmd.upper() == "V":
+            cy = cy + args[0] if rel else args[0]
+        else:
+            px, py = args[-2], args[-1]
+            cx, cy = (cx + px, cy + py) if rel else (px, py)
+        xs.append(cx)
+        ys.append(cy)
+    if len(xs) < 2:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _shape_box(el, chain, grads=None):
+    """A filled shape's box, or None when it cannot hide anything.
+
+    `path` and `polygon` come back as `(quad, True)` — approximate, because every
+    coordinate in the data is treated as a point on the outline and a control point
+    pushes the box outwards. That is good enough for asking what a word is printed on
+    and not good enough for asking whether two things collide, so the caller uses it
+    for the first question only.
+    """
     tag = el.tag.replace(SVG_NS, "")
     fill = (el.get("fill") or "").lower()
-    if fill in ("none", "") or fill.startswith("url(#") and "grad" not in fill:
-        pass
-    if fill == "none":
+    if fill in ("none", ""):
         return None
-    op = _num(el, "opacity", 1.0)
-    fop = _num(el, "fill-opacity", 1.0)
-    if op * fop < SEE_THROUGH:
+    if _num(el, "opacity", 1.0) * _num(el, "fill-opacity", 1.0) < SEE_THROUGH:
         return None
+    if fill.startswith("url(#") and grads is not None and fill[5:].rstrip(")") not in grads:
+        return None
+    approx = False
     if tag == "rect":
         x, y = _num(el, "x"), _num(el, "y")
         x1, y1 = x + _num(el, "width"), y + _num(el, "height")
@@ -266,12 +322,26 @@ def _shape_box(el, chain):
         cx, cy = _num(el, "cx"), _num(el, "cy")
         rx, ry = _num(el, "rx"), _num(el, "ry")
         x, y, x1, y1 = cx - rx, cy - ry, cx + rx, cy + ry
+    elif tag in ("polygon", "polyline"):
+        nums = [float(v) for v in re.findall(r"-?\d*\.?\d+", el.get("points", ""))]
+        if len(nums) < 4:
+            return None
+        x, y = min(nums[0::2]), min(nums[1::2])
+        x1, y1 = max(nums[0::2]), max(nums[1::2])
+        approx = True
+    elif tag == "path":
+        span = _path_extent(el.get("d", ""))
+        if span is None:
+            return None
+        x, y, x1, y1 = span
+        approx = True
     else:
         return None
-    return Quad(_moved([(x, y), (x1, y), (x1, y1), (x, y1)], chain))
+    quad = Quad(_moved([(x, y), (x1, y), (x1, y1), (x, y1)], chain))
+    return (quad, True) if approx else quad
 
 
-def _walk(node, chain, order, texts, shapes):
+def _walk(node, chain, order, texts, shapes, grads=None):
     for el in node:
         tag = el.tag.replace(SVG_NS, "")
         if tag == "defs":
@@ -280,27 +350,84 @@ def _walk(node, chain, order, texts, shapes):
         if tag == "text":
             box, content, size, fam = _text_box(el, sub)
             if content.strip() and _num(el, "opacity", 1.0) >= GHOST:
-                texts.append((order[0], box, content, size, fam))
+                texts.append((order[0], box, content, size, fam, el.get("fill", "")))
         elif tag == "g":
-            _walk(el, sub, order, texts, shapes)
+            _walk(el, sub, order, texts, shapes, grads)
             continue
         else:
-            box = _shape_box(el, sub)
+            box = _shape_box(el, sub, grads)
             if box is not None:
-                shapes.append((order[0], box))
+                approx = isinstance(box, tuple)
+                if approx:
+                    box = box[0]
+                shapes.append((order[0], box, el.get("fill", ""), approx))
         order[0] += 1
 
 
-def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD):
+def _contrast(fill, under, grads=None):
+    """WCAG contrast between two solid colours, or None when either is not solid.
+
+    A gradient or a filter reference cannot be resolved from the markup, and guessing
+    at one would report failures that are not there — which is how a check stops being
+    believed. Unresolvable pairs are simply not judged.
+    """
+    grads = grads or {}
+    a, b = _resolve(fill, grads), _resolve(under, grads)
+    if a is None or b is None:
+        return None
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _gradients(root):
+    """Every gradient's mean stop colour, by id.
+
+    Most fills in these images are gradients, so a contrast check that gives up on
+    `url(#…)` gives up on almost everything and quietly passes the pairings it was
+    written to catch. A gradient is not one colour, but its mean is a fair stand-in
+    for asking whether type can be read on it.
+    """
+    out = {}
+    for grad in root.iter():
+        tag = grad.tag.replace(SVG_NS, "")
+        if tag not in ("linearGradient", "radialGradient"):
+            continue
+        lums, ops = [], []
+        for stop in grad:
+            value = luminance(stop.get("stop-color", ""))
+            opacity = float(stop.get("stop-opacity", 1) or 1)
+            ops.append(opacity)
+            if value is not None and opacity >= 0.5:
+                lums.append(value)
+        # A gradient that is mostly transparent is a wash over whatever is behind it,
+        # not a surface of its own. Counting it as one reports a word as unreadable
+        # against a glow it is merely sitting near.
+        if lums and sum(ops) / len(ops) >= SEE_THROUGH:
+            out[grad.get("id", "")] = sum(lums) / len(lums)
+    return out
+
+
+def _resolve(fill, grads):
+    """Luminance of a fill, following one level of gradient reference."""
+    if not fill:
+        return None
+    if fill.startswith("url(#"):
+        return grads.get(fill[5:].rstrip(")"))
+    return luminance(fill)
+
+
+def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD, page=None):
     """Every layout fault in one rendered image, as a list of strings."""
     root = ET.fromstring(svg_text)
     texts, shapes, order = [], [], [0]
-    _walk(root, [], order, texts, shapes)
+    page = page or ""
+    grads = _gradients(root)
+    _walk(root, [], order, texts, shapes, grads)
     faults = []
 
     frame = rect_quad(0, 0, W, H)
     safe = rect_quad(safe_pad, safe_pad, W - safe_pad, H - safe_pad)
-    for _, box, content, size, fam in texts:
+    for _, box, content, size, fam, _f in texts:
         label = content[:34]
         # A declared bleed covers both edges of the same idea: ChapterPlate's numeral
         # is cropped on purpose, and SplitPanels' fields run past the frame.
@@ -313,8 +440,8 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD):
         if size < floor and kind == "cover":
             faults.append(f"type too small ({size:.0f}px): {label!r}")
 
-    for i, (_, a, ca, _s, _f) in enumerate(texts):
-        for _, b, cb, _s2, _f2 in texts[i + 1:]:
+    for i, (_, a, ca, _s, _f, _c) in enumerate(texts):
+        for _, b, cb, _s2, _f2, _c2 in texts[i + 1:]:
             if a.shrunk(TOUCH).overlap(b.shrunk(TOUCH)) > TOUCH * TOUCH:
                 faults.append(f"text over text: {ca[:28]!r} and {cb[:28]!r}")
 
@@ -324,23 +451,44 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD):
     # a tile from the field behind — the label is on the wrong ground, and it reads
     # that way whether the surface arrived before the word or after it.
     ground_area = W * H * 0.5
-    for zt, box, content, _size, _fam in texts:
+    for zt, box, content, _size, _fam, fill in texts:
         if not box.area:
             continue
-        over = sum(sbox.overlap(box) for zs, sbox in shapes
-                   if zs > zt and sbox.area < ground_area)
+        over = sum(sbox.overlap(box) for zs, sbox, _sf, ap in shapes
+                   if zs > zt and not ap and sbox.area < ground_area)
         if over / box.area > OBSCURED:
             faults.append(f"painted over ({over / box.area:.0%}): {content[:28]!r}")
             continue
-        beneath = [(zs, sbox) for zs, sbox in shapes
+        # An approximate box over-states a curved shape, so it has to clearly contain
+        # the word before it is treated as the ground under it. Judged at the same
+        # threshold as a rectangle it claims words that merely sit near a ribbon.
+        beneath = [(zs, sbox, sfill, ap) for zs, sbox, sfill, ap in shapes
                    if zs < zt and sbox.area < ground_area
-                   and sbox.overlap(box) > box.area * OBSCURED]
+                   and sbox.overlap(box) > box.area * (0.75 if ap else OBSCURED)]
         if beneath:
-            _z, nearest = max(beneath, key=lambda item: item[0])
-            if nearest.overlap(box) < box.area * 0.92:
+            _z, nearest, nfill, approx = max(beneath, key=lambda item: item[0])
+            if not approx and nearest.overlap(box) < box.area * 0.92:
                 faults.append(f"lands on a surface that is not its own "
                               f"({nearest.overlap(box) / box.area:.0%}): "
                               f"{content[:28]!r}")
+                continue
+            under = nfill
+        else:
+            # Nothing small sits under the word, but a direction whose panels fill the
+            # frame has made those panels the ground. Ask the largest thing that
+            # contains the word before falling back to the page behind everything.
+            wide = [(zs, sfill) for zs, sbox, sfill, ap in shapes
+                    if zs < zt and not ap and sbox.overlap(box) > box.area * 0.92]
+            under = max(wide, key=lambda item: item[0])[1] if wide else page
+
+        # A word the same brightness as what it is printed on is in the file and not
+        # in the picture. This is the failure a neutral-ground surface invites: the
+        # palette roles keep their names while their values flip, so a plate that was
+        # dark under light type becomes light under light type.
+        ratio = _contrast(fill, under, grads)
+        if ratio is not None and ratio < MIN_CONTRAST:
+            faults.append(f"too little contrast ({ratio:.1f}:1, needs "
+                          f"{MIN_CONTRAST:.0f}): {content[:28]!r} on {under}")
 
     # A loose decoration parked against the plate a label sits on reads as crowding
     # even though nothing overlaps a word — the grid's lit tiles landing on the
@@ -349,16 +497,17 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD):
     # overlaps the plate, or is no smaller than it, is structure rather than clutter.
     ground_area = W * H * 0.5
     plates = {}
-    for _z, box, _c, _s, _f in texts:
-        holders = [(sbox.area, i) for i, (_zs, sbox) in enumerate(shapes)
-                   if sbox.overlap(box) > box.area * 0.92 and sbox.area < ground_area]
+    for _z, box, _c, _s, _f, _fill in texts:
+        holders = [(sbox.area, i) for i, (_zs, sbox, _sf, ap) in enumerate(shapes)
+                   if not ap and sbox.overlap(box) > box.area * 0.92
+                   and sbox.area < ground_area]
         if holders:
             plates.setdefault(min(holders)[1], []).append(box)
     for index in plates:
         plate = shapes[index][1]
         air = plate.grown(BREATH)
-        for i, (_zs, sbox) in enumerate(shapes):
-            if i == index or sbox.area >= plate.area or sbox.overlap(plate) > 1:
+        for i, (_zs, sbox, _sf, ap) in enumerate(shapes):
+            if ap or i == index or sbox.area >= plate.area or sbox.overlap(plate) > 1:
                 continue
             if sbox.overlap(air) > BREATH * BREATH:
                 faults.append(f"crowds the label plate: {sbox} sits inside its air")
@@ -366,7 +515,7 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD):
 
     if kind == "cover":
         body = 0
-        for _z, _box, content, _size, fam in texts:
+        for _z, _box, content, _size, fam, _fill in texts:
             words = content.strip()
             if fam is MONO:
                 continue
