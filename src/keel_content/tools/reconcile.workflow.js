@@ -32,6 +32,11 @@ const AT_GATE = AGENT_TYPES.gate || 'general-purpose'
 const B = (A && A.bucket) || A
 const buckets = (B && Array.isArray(B.buckets) && B.buckets) || []
 const registryKeys = (B && Array.isArray(B.registry_keys) && B.registry_keys) || []
+// Owner records keyed by canonical_key (intent_registry.py bucket, added alongside
+// registry_keys) — the fallback collision source for a spec whose canonical_key was
+// only assigned by the Normalize stage below, so it never had a chance to populate
+// registry_matches in the Python pre-pass.
+const registryOwners = (B && typeof B.registry_owners === 'object' && B.registry_owners) || {}
 if (!buckets.length) {
   throw new Error('args.bucket.buckets is empty — run `intent_registry.py bucket <worklist.json>` and pass its parsed JSON as args.bucket')
 }
@@ -106,7 +111,16 @@ function candidateGroups(bucket, keyByCid) {
       if (!placed) clusters.push([r])
     }
     for (const cl of clusters) {
-      const prior = (cl[0].registry_matches || []).find((m) => m.canonical_key === key) || null
+      let prior = (cl[0].registry_matches || []).find((m) => m.canonical_key === key) || null
+      // Fallback: the deterministic pre-pass only populates registry_matches for a
+      // spec that ALREADY had a canonical_key before Normalize ran. A residual spec
+      // (canonical_key: null) that Normalize just assigned this key never got that
+      // chance — consult the full owner map here instead, still gated on market
+      // compatibility (a cross-market owner overlaps every specific market; a
+      // market-incompatible owner must NEVER produce a false-positive group).
+      if (!prior && registryOwners[key] && cl.some((r) => marketCompatible(r, registryOwners[key]))) {
+        prior = registryOwners[key]
+      }
       if (cl.length >= 2 || prior) {
         groups.push({ canonical_key: key, intent_frame: bucket.intent_frame, members: cl, prior_owner: prior })
       }

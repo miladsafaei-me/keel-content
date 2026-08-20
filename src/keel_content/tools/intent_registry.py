@@ -222,11 +222,31 @@ def cmd_bucket(args):
             "needs_normalization": needs_norm,
         })
 
+    # Full owner records keyed by canonical_key, so the reconcile workflow can
+    # detect a collision even when the key is only assigned LATER by the LLM
+    # Normalize stage (a spec with canonical_key: null has empty registry_matches
+    # above — this is the fallback candidateGroups() consults for that case).
+    registry_owners = {}
+    for key, owner in owners_by_key.items():
+        if not key:
+            continue
+        registry_owners[key] = {
+            "canonical_key": owner.get("canonical_key"),
+            "owner": owner.get("owner"),
+            "owner_content_id": owner.get("owner_content_id"),
+            "owner_kind": owner.get("owner_kind", "plan"),
+            "owner_status": owner.get("owner_status", ""),
+            "owner_url": owner.get("owner_url", ""),
+            "market": owner.get("market"),
+            "cross_market": bool(owner.get("cross_market")),
+        }
+
     out = {
         "version": 1,
         "worklist": str(args.worklist),
         "registry": str(args.registry),
         "registry_keys": sorted(k for k in owners_by_key if k),
+        "registry_owners": registry_owners,
         "buckets": out_buckets,
     }
     text = json.dumps(out, indent=2, ensure_ascii=False)
