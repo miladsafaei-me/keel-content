@@ -101,6 +101,18 @@ def market_model():
     return django_apps.get_model(_cfg("market_model", "blog.Market"))
 
 
+def resolve_refresh_article_rendered():
+    """Import and return the host's re-render callable WITHOUT calling it.
+
+    Exists so a command that is about to rewrite many posts can prove the hook is
+    reachable before its first write. ``refresh_article_rendered`` resolves lazily
+    on every call, which is fine in isolation but means a misconfigured host only
+    discovers the problem after it has already saved something.
+    """
+    dotted = _cfg("refresh_rendered_hook", "blog.tasks.refresh_article_rendered")
+    return import_string(dotted)
+
+
 def refresh_article_rendered(post) -> None:
     """Re-render a post's cached HTML after an out-of-band edit.
 

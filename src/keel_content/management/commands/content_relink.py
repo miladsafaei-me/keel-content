@@ -331,6 +331,24 @@ class Command(BaseCommand):
             with open(backup_path, "w", encoding="utf-8") as fh:
                 json.dump(backup, fh, ensure_ascii=False, indent=2)
 
+        # Resolve the host's re-render hook BEFORE the first write. It used to be
+        # resolved lazily inside the loop, per post — so a host that had not
+        # configured `refresh_rendered_hook` (and therefore fell through to the
+        # package default "blog.tasks.refresh_article_rendered", SignalBots' app
+        # layout) saved post #1, then died on ModuleNotFoundError and left the rest
+        # untouched. That is a PARTIAL REWRITE of a live corpus, recoverable only
+        # from --backup. Failing here costs nothing and cannot corrupt anything.
+        if not dry_run:
+            try:
+                host.resolve_refresh_article_rendered()
+            except Exception as exc:
+                raise CommandError(
+                    "cannot resolve the host's article re-render hook, so refusing to "
+                    "write: every post would be saved and then fail to re-render. Set "
+                    'KEEL_CONTENT["refresh_rendered_hook"] to a dotted "(post) -> None" '
+                    f"callable. Underlying error: {exc}"
+                ) from exc
+
         totals = {"posts": 0, "inserted": 0, "dropped_self": 0, "dropped_unknown": 0,
                   "skipped": 0, "rewrites": 0, "rewrites_skipped": 0}
         if scope == "cross-cluster":
