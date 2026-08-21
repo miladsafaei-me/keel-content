@@ -12,11 +12,28 @@ from __future__ import annotations
 
 import re
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from keel_content.core.hero import MOTIFS, STYLES, HeroSpec, build_hero_svg
+from keel_content.core.hero.tokens import GREEN
+from keel_content.host import featured_image_absolute_url
 
 _HEAD = [[("Two platforms.", None)], [("One real difference.", None)]]
+
+
+# ``featured_image_absolute_url`` resolves a DOTTED PATH, so the test's local closure
+# has to be reachable by name. ``_install_hook`` parks it here for the duration.
+_HOOK = None
+
+
+def _hook_target(*args, **kwargs):
+    return _HOOK(*args, **kwargs)
+
+
+def _install_hook(fn):
+    global _HOOK
+    _HOOK = fn
+
 
 
 def _spec(style: str, motif: str) -> HeroSpec:
@@ -26,14 +43,30 @@ def _spec(style: str, motif: str) -> HeroSpec:
 
 class HeroMatrixTests(SimpleTestCase):
     def test_every_style_motif_builds_with_headline(self):
-        """Every combination renders a non-empty SVG that still carries the headline."""
-        for style in STYLES:
-            for motif in MOTIFS:
-                with self.subTest(style=style, motif=motif):
-                    svg = build_hero_svg(_spec(style, motif))
-                    self.assertTrue(svg.startswith("<svg") and svg.endswith("</svg>"))
-                    self.assertIn("One real difference.", svg)
-                    self.assertIn("SignalBots", svg)  # brand chrome present
+        """Every combination renders a non-empty SVG that still carries the headline
+        and the HOST's wordmark — not a wordmark of the package's own."""
+        # The wordmark comes from KEEL_CONTENT["brand"] (config._DEFAULT_BRAND leaves
+        # it empty). This assertion used to read `assertIn("SignalBots", svg)`, true
+        # only while the engine lived in SignalBots; after extraction the lockup
+        # renders nothing unless a host paints one, so the literal never appeared and
+        # every style x motif combination failed.
+        with override_settings(KEEL_CONTENT={"brand": {"wordmark": "ExampleHost"}}):
+            for style in STYLES:
+                for motif in MOTIFS:
+                    with self.subTest(style=style, motif=motif):
+                        svg = build_hero_svg(_spec(style, motif))
+                        self.assertTrue(svg.startswith("<svg") and svg.endswith("</svg>"))
+                        self.assertIn("One real difference.", svg)
+                        self.assertIn("ExampleHost", svg)  # host brand chrome present
+
+    def test_no_brand_configured_renders_no_lockup(self):
+        """A host that paints no brand gets no wordmark — the package owns no identity."""
+        with override_settings(KEEL_CONTENT={}):
+            svg = build_hero_svg(_spec(next(iter(STYLES)), next(iter(MOTIFS))))
+            self.assertTrue(svg.startswith("<svg") and svg.endswith("</svg>"))
+            self.assertIn("One real difference.", svg)
+            self.assertNotIn("ExampleHost", svg)
+            self.assertNotIn("SignalBots", svg)
 
     def test_device_signal_draws_one_device(self):
         """device_signal must not double-draw the device (the phone has the only rx=26)."""
@@ -62,7 +95,17 @@ class HeroMatrixTests(SimpleTestCase):
             "network": (942, 978), "infographic": (942, 978),
             "isometric": (936, 984),
         }
-        line_re = re.compile(r'<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" stroke="#41FFA0" stroke-width="2.5"/>')
+        # The stroke is the host's brand accent. This regex used to hardcode
+        # "#41FFA0" — SignalBots' accent, valid only while the engine lived there.
+        # Read the resolved token instead of pinning a colour: hero.tokens binds the
+        # palette at IMPORT time, so override_settings cannot change it after the
+        # fact (see TODO.md — chrome.py resolves the same brand dict per call, and
+        # that inconsistency is a real finding, not something this test should paper
+        # over). The geometry, not the colour, is what this test is about.
+        line_re = re.compile(
+            r'<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" '
+            r'stroke="' + re.escape(GREEN) + r'" stroke-width="2.5"/>'
+        )
         for style, (ex1, ex2) in expected.items():
             with self.subTest(style=style):
                 svg = build_hero_svg(_spec(style, "paired"))
@@ -89,32 +132,31 @@ class HeroBriefTests(SimpleTestCase):
         # ExtraBold advance ~0.62em; text zone is ~620px wide
         self.assertLessEqual(longest * (spec.head_size or 62) * 0.62, 660)
 
-    def test_og_image_prefers_webp_sibling(self):
-        """og:image resolves an SVG hero to its .webp sibling, or None when absent
-        (caller then uses the brand default card -- never an SVG og:image)."""
-        import tempfile
-        from pathlib import Path
+    def test_og_image_url_is_delegated_to_the_host(self):
+        """``featured_image_absolute_url`` dispatches; it holds no policy of its own.
 
-        from django.test import override_settings
+        This replaces ``test_og_image_prefers_webp_sibling``, which asserted a
+        POLICY — "an SVG hero resolves to its .webp sibling, or None when absent" —
+        that lives in whichever host the hook points at, not in this package. Run
+        under Binary Option Trading's settings it failed, because Binary's
+        ``core.media_urls`` implements a different rule; that made the package suite
+        red for a host difference the package does not own. The webp-sibling rule
+        belongs in SignalBots' own tests. What IS the package's contract, and what
+        this test pins, is that the hook is resolved from settings and called.
+        """
+        called = {}
 
-        from keel_content.host import featured_image_absolute_url
+        def _hook(request, stored):
+            called["args"] = (request, stored)
+            return "https://example.test/media/x.webp"
 
-        class _Req:
-            def build_absolute_uri(self, u):
-                return "https://signalbots.ai" + u
-
-        rel = "blog/featured/2026/06/post.abc12345"
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "blog/featured/2026/06").mkdir(parents=True)
-            with override_settings(MEDIA_ROOT=d, MEDIA_URL="/media/"):
-                stored = f"/media/{rel}.svg"
-                self.assertIsNone(featured_image_absolute_url(_Req(), stored))  # no raster yet
-                (Path(d) / f"{rel}.webp").write_bytes(b"RIFF....WEBP")
-                self.assertEqual(
-                    featured_image_absolute_url(_Req(), stored),
-                    f"https://signalbots.ai/media/{rel}.webp",
-                )
-
+        with override_settings(KEEL_CONTENT={"featured_image_url_hook": f"{__name__}._hook_target"}):
+            _install_hook(_hook)
+            self.assertEqual(
+                featured_image_absolute_url("REQ", "/media/x.svg"),
+                "https://example.test/media/x.webp",
+            )
+        self.assertEqual(called["args"], ("REQ", "/media/x.svg"))
     def test_motif_inferred_from_concept(self):
         from keel_content.core.hero.pipeline import derive_spec
 

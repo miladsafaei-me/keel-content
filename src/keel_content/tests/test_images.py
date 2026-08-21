@@ -13,6 +13,7 @@ from pathlib import Path
 from django.test import SimpleTestCase, override_settings
 
 from keel_content.core.images import (
+    NB2_MIN_IMAGES,
     apply_images,
     count_words,
     image_violations,
@@ -50,14 +51,19 @@ class WordCountTests(SimpleTestCase):
 
 class BudgetTests(SimpleTestCase):
     def test_cap_matches_rule(self):
-        # 2 per 1000 words, floored by whole thousands.
+        # NB2_IMAGES_PER_1000_WORDS per whole 1000 words, then floored at
+        # NB2_MIN_IMAGES so even a short post may still carry a couple of photoreal
+        # images. This test previously asserted the pre-floor rule (999 -> 0,
+        # 0 -> 0, -5 -> 0) and went red when the floor was introduced; the floor is
+        # deliberate and documented on nb2_cap, so the expectations move, not the code.
         self.assertEqual(nb2_cap(3900), 6)   # the user's worked example
-        self.assertEqual(nb2_cap(999), 0)
         self.assertEqual(nb2_cap(1000), 2)
         self.assertEqual(nb2_cap(1999), 2)
         self.assertEqual(nb2_cap(2000), 4)
-        self.assertEqual(nb2_cap(0), 0)
-        self.assertEqual(nb2_cap(-5), 0)
+        # Below one full thousand the floor is what remains.
+        self.assertEqual(nb2_cap(999), NB2_MIN_IMAGES)
+        self.assertEqual(nb2_cap(0), NB2_MIN_IMAGES)
+        self.assertEqual(nb2_cap(-5), NB2_MIN_IMAGES)
 
 
 class ViolationTests(SimpleTestCase):
