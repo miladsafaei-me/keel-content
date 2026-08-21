@@ -156,7 +156,7 @@ class Command(BaseCommand):
         names = [p.title for p in unmapped_plans]
         if include_live:
             names += list(
-                Tag.objects.filter(is_term=True, key_in_clusters__isnull=True)
+                host.glossary_term_queryset().filter(key_in_clusters__isnull=True)
                 .values_list("name", flat=True)
             )
         themes: dict[str, list[str]] = defaultdict(list)

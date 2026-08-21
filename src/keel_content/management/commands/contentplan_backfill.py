@@ -132,7 +132,7 @@ class Command(BaseCommand):
             target=ContentPlan.Target.GLOSSARY_TERM, produced_term__isnull=True
         ).exclude(status=ContentPlan.Status.REJECTED)
         for plan in rows:
-            tag = Tag.objects.filter(is_term=True, slug=slugify(plan.title)).first()
+            tag = host.glossary_term_queryset().filter(slug=slugify(plan.title)).first()
             if tag is None:
                 continue
             if dry:

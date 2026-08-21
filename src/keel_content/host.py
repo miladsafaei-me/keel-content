@@ -33,6 +33,8 @@ Configuration surface (all optional)::
         "glossary_url_hook": "myapp.content_pipeline.keel_adapter.glossary_url",  # (term) -> str
         "post_url_hook": "myapp.content_pipeline.keel_adapter.post_url",  # (post) -> str
         "glossary_shot_dir": "/app/tools/glossary-viz/out",
+        "glossary_term_filter": {"is_term": True},  # {} for a dedicated term model
+        "glossary_term_name_field": "name",         # PropTerm calls it "term"
     }
 """
 
@@ -305,3 +307,29 @@ def glossary_shot_dir() -> str:
     settings actually apply.
     """
     return _cfg("glossary_shot_dir", "/app/tools/glossary-viz/out")
+
+
+def glossary_term_queryset():
+    """Every live glossary term, in the host's own model shape.
+
+    The package used to hardcode ``Tag.objects.filter(is_term=True)``, which is
+    keel-cms's shape: one ``Tag`` table holding both ordinary tags and glossary
+    terms, told apart by a boolean. A host with a DEDICATED term model has no such
+    flag — Prop Firm Review's ``core.PropTerm`` is entirely terms — and the filter
+    raises ``FieldError`` there. Configure ``KEEL_CONTENT["glossary_term_filter"]``
+    with the host's own predicate (``{}`` for a dedicated model). keel-cms already
+    solved this same shape problem the same way for its glossary tiers.
+    """
+    Tag = tag_model()
+    flt = _cfg("glossary_term_filter", {"is_term": True})
+    return Tag.objects.filter(**flt) if flt else Tag.objects.all()
+
+
+def term_name(term) -> str:
+    """The term's human label, from whichever field the host names it in.
+
+    keel-cms calls it ``name``; Prop Firm Review's ``PropTerm`` calls it ``term``.
+    Configure via ``KEEL_CONTENT["glossary_term_name_field"]``.
+    """
+    field = _cfg("glossary_term_name_field", "name")
+    return (getattr(term, field, "") or "").strip()

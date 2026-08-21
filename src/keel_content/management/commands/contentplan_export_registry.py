@@ -11,7 +11,8 @@ carried over verbatim from the canonical registry file (the only part still auth
 hand).
 
 Glossary terms are ALSO projected (``--skip-glossary`` to omit): every
-``Tag(is_term=True)`` is a pre-owned ``what-is`` need whose owner is its
+every live term (``host.glossary_term_queryset()``) is a pre-owned ``what-is``
+need whose owner is its
 own public page (resolved through ``host.glossary_url``, never guessed),
 and every QUEUED term — a ContentPlan row with
 ``target=glossary_term`` still pending — owns its need too (``owner_status=planned``:
@@ -127,7 +128,7 @@ class Command(BaseCommand):
             # not market-scoped), and the enrichment ledger routes the demand to the
             # term page instead of a duplicate what-is blog. Queried at export time —
             # the projection always reflects the CURRENT glossary, never a snapshot.
-            for term in Tag.objects.filter(is_term=True).order_by("slug"):
+            for term in host.glossary_term_queryset().order_by("slug"):
                 # The host owns its glossary route — see host.glossary_url. An
                 # unresolvable URL is exported empty, never guessed: reconcile
                 # verdicts quote these URLs, so a guess sends a human to a 404.
@@ -135,7 +136,7 @@ class Command(BaseCommand):
                 if not url:
                     unresolved_urls += 1
                 entries.append(self._glossary_entry(
-                    term.name, term.slug, status="published", url=url,
+                    host.term_name(term), term.slug, status="published", url=url,
                 ))
                 glossary_count += 1
             # Terms QUEUED for authoring (ContentPlan target=glossary_term rows

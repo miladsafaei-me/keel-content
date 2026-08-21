@@ -123,3 +123,57 @@ class GlossaryShotDirTests(SimpleTestCase):
         # import-time-freeze defect TODO.md records for the hero palette.
         with override_settings(KEEL_CONTENT={"glossary_shot_dir": "/srv/shots"}):
             self.assertEqual(host.glossary_shot_dir(), "/srv/shots")
+
+
+class _FakeQS:
+    def __init__(self, kwargs=None):
+        self.kwargs = kwargs
+
+
+class _FakeManager:
+    def filter(self, **kw):
+        return _FakeQS(kw)
+
+    def all(self):
+        return _FakeQS(None)
+
+
+class _FakeTagModel:
+    objects = _FakeManager()
+
+
+class GlossaryTermShapeTests(SimpleTestCase):
+    """The term model's SHAPE is a host decision too, not just its URL.
+
+    keel-cms keeps tags and glossary terms in one table told apart by ``is_term``
+    and labels them ``name``. Prop Firm Review's ``core.PropTerm`` is a DEDICATED
+    term model: no flag to filter on, and the label field is ``term``. The
+    hardcoded ``filter(is_term=True)`` raised FieldError there — the same
+    first-adopter-default disease as the URL hardcodes, in a field name.
+    """
+
+    def _patched(self):
+        return override_settings(KEEL_CONTENT={"tag_model": "x.Y"})
+
+    def test_default_filter_matches_the_keel_cms_shape(self):
+        with override_settings(KEEL_CONTENT={}):
+            self.assertEqual(host._cfg("glossary_term_filter", {"is_term": True}), {"is_term": True})
+
+    def test_empty_filter_means_every_row_is_a_term(self):
+        with override_settings(KEEL_CONTENT={"glossary_term_filter": {}}):
+            self.assertEqual(host._cfg("glossary_term_filter", {"is_term": True}), {})
+
+    def test_term_name_defaults_to_name(self):
+        with override_settings(KEEL_CONTENT={}):
+            self.assertEqual(host.term_name(FakeTerm("x")), "")
+            obj = type("T", (), {"name": " Drawdown "})()
+            self.assertEqual(host.term_name(obj), "Drawdown")
+
+    def test_term_name_reads_the_host_field(self):
+        obj = type("T", (), {"term": " Profit Split ", "name": "WRONG"})()
+        with override_settings(KEEL_CONTENT={"glossary_term_name_field": "term"}):
+            self.assertEqual(host.term_name(obj), "Profit Split")
+
+    def test_term_name_missing_field_is_empty_not_an_error(self):
+        with override_settings(KEEL_CONTENT={"glossary_term_name_field": "nope"}):
+            self.assertEqual(host.term_name(FakeTerm("x")), "")

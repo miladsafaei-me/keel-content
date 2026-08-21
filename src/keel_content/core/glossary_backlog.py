@@ -29,6 +29,7 @@ from typing import Any
 
 from django.utils.text import slugify
 
+from keel_content import host
 from . import term_match
 from .types import ContentInput
 
@@ -82,14 +83,14 @@ def _live_term_for(term: str):
     """The live Tag(is_term=True) matching ``term`` (slug or normalized tokens)."""
     _CP, Tag, _TC = _models()
     slug = slugify(term)
-    hit = Tag.objects.filter(is_term=True, slug=slug).first()
+    hit = host.glossary_term_queryset().filter(slug=slug).first()
     if hit is not None:
         return hit
     toks = term_match.tokens(term)
     if not toks:
         return None
-    for tag in Tag.objects.filter(is_term=True).only("name", "slug"):
-        if term_match.tokens(tag.name) == toks:
+    for tag in host.glossary_term_queryset():
+        if term_match.tokens(host.term_name(tag)) == toks:
             return tag
     return None
 
