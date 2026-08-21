@@ -91,6 +91,9 @@ class Command(BaseCommand):
             # glossary_term), never as plan entries — one owner per need.
             .exclude(target=ContentPlan.Target.GLOSSARY_TERM)
             .prefetch_related("markets")
+            # produced_post is dereferenced per row for its public URL — without
+            # this the export fires one extra query per produced plan.
+            .select_related("produced_post")
         )
         for plan in qs:
             is_cross, primary = _market_axes([m.name for m in plan.markets.all()])
@@ -108,7 +111,10 @@ class Command(BaseCommand):
                 "owner_content_id": plan.slug,
                 "owner_kind": "plan",
                 "owner_status": plan.status,
-                "owner_url": f"/blog/{plan.slug}" if plan.produced_post_id else "",
+                # The article route is the host's, same as the glossary route above
+                # — never f"/blog/{slug}", which was only ever right on the first
+                # two adopters.
+                "owner_url": host.post_url(plan.produced_post) if plan.produced_post_id else "",
                 "evidence": list(plan.competitor_urls or []),
                 "scope_includes": list(plan.scope_includes or []),
                 "scope_excludes": list(plan.scope_excludes or []),

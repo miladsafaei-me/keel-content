@@ -40,7 +40,6 @@ from keel_ui.renderer import SpecValidationError
 Tag = host.tag_model()
 
 STAGING_SUBDIR = "glossary-staging"
-SHOT_DIR = "/app/tools/glossary-viz/out"
 DRAFT_MODEL = "claude-opus-4-8"
 VISUAL_MODEL = "claude-opus-4-8"
 
@@ -232,14 +231,24 @@ class Command(BaseCommand):
         related_slugs = record.get("related_term_slugs") or record.get("related_terms") or []
         related = list(Tag.objects.filter(is_term=True, slug__in=related_slugs))
         tag.related_terms.set(related)
+        # The glossary route is the host's — see host.glossary_url. Hardcoding
+        # /trading-glossary/<slug> here would write a Landing row (a real URL) at a
+        # path that does not exist on any host but the first two adopters.
+        term_url = host.glossary_url(tag)
+        if not term_url:
+            raise CommandError(
+                f"cannot resolve a public URL for term {slug!r}. Set KEEL_CONTENT"
+                '["glossary_url_hook"] to a dotted "(term) -> str" callable in the '
+                "host adapter. Refusing to create a Landing at a guessed path."
+            )
         Landing.objects.get_or_create(
-            url=f"/trading-glossary/{slug}",
+            url=term_url,
             defaults={"is_indexable": False},
         )
         return slug
 
     def _read_verdict(self, slug: str) -> dict[str, Any]:
-        p = Path(SHOT_DIR) / f"{slug}.verdict.json"
+        p = Path(host.glossary_shot_dir()) / f"{slug}.verdict.json"
         if not p.is_file():
             return {"verdict": "missing"}
         return json.loads(p.read_text(encoding="utf-8"))

@@ -301,7 +301,25 @@ class Command(BaseCommand):
         # reported rather than guessed at.
         rewrites_by_slug = plan.get("rewrites") or {}
 
-        valid_slugs = set(Post.objects.values_list("slug", flat=True))
+        # slug -> public URL, resolved through the host (see host.post_url). This
+        # used to be built inline as f"/blog/{slug}", which is Binary Option
+        # Trading's and SignalBots' route but NOT Revenika's (/academy/<slug>) and
+        # not Sarmayeh Media's (/blog/<slug>/, trailing slash) — and these URLs are
+        # written straight into published article bodies as [anchor](url), so a
+        # wrong one ships a 404 into the prose.
+        target_urls = {
+            p_.slug: host.post_url(p_)
+            for p_ in Post.objects.only("slug").iterator()
+        }
+        valid_slugs = set(target_urls)
+        unresolved = sum(1 for u in target_urls.values() if not u)
+        if unresolved:
+            raise CommandError(
+                f"{unresolved} of {len(target_urls)} post(s) have no resolvable public "
+                'URL. Set KEEL_CONTENT["post_url_hook"] to a dotted "(post) -> str" '
+                "callable in the host adapter. Refusing to write internal links rather "
+                "than guessing a route."
+            )
         posts = {p.slug: p for p in Post.objects.filter(slug__in=list(edges_by_slug))}
 
         if not dry_run:
@@ -336,7 +354,7 @@ class Command(BaseCommand):
                 if target not in valid_slugs:
                     totals["dropped_unknown"] += 1
                     continue
-                target_url = f"/blog/{target}"
+                target_url = target_urls[target]
                 if scope == "cross-cluster":
                     if cross_accepted >= _MAX_CROSS_CLUSTER_EDGES_PER_ARTICLE:
                         totals["dropped_ceiling"] += 1

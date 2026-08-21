@@ -437,7 +437,13 @@ def cmd_apply(args):
                         "target": survivor,
                         "target_kind": "post",
                         "target_status": "produced",
-                        "target_url": f"/blog/{specs[survivor].get('slug') or survivor}",
+                        # The spec carries the host's real URL when the exporter
+                        # supplies one. This module is stdlib-only (no Django, no
+                        # settings), so it CANNOT resolve a route itself — it used to
+                        # fabricate f"/blog/{slug}", which is right on two adopters
+                        # and wrong on Revenika (/academy/<slug>) and Sarmayeh
+                        # (trailing slash). Empty means "unknown", never a guess.
+                        "target_url": specs[survivor].get("url") or "",
                         "target_title": specs[survivor].get("title", ""),
                         "absorbed": losers,
                         "keywords": [

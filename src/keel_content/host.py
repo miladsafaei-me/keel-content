@@ -31,6 +31,8 @@ Configuration surface (all optional)::
         "glossary_surface_labels": "core.services.trading_glossary.SURFACE_LABELS",
         "market_hubs_hook": "myapp.funnel.market_hubs",  # () -> {slug: [hub, ...]}
         "glossary_url_hook": "myapp.content_pipeline.keel_adapter.glossary_url",  # (term) -> str
+        "post_url_hook": "myapp.content_pipeline.keel_adapter.post_url",  # (post) -> str
+        "glossary_shot_dir": "/app/tools/glossary-viz/out",
     }
 """
 
@@ -263,3 +265,43 @@ def glossary_url(term) -> str:
         except Exception:
             return ""
     return ""
+
+
+def post_url(post) -> str:
+    """Return the host's real public URL for one article, or ``""``.
+
+    The article route is a host decision, exactly like the glossary route: Binary
+    Option Trading serves ``/blog/<slug>``, Revenika serves ``/academy/<slug>``,
+    Sarmayeh Media serves ``/blog/<slug>/`` WITH a trailing slash. Resolution order
+    mirrors :func:`glossary_url`: ``KEEL_CONTENT["post_url_hook"]`` (a dotted
+    ``(post) -> str``), then ``post.get_absolute_url()``, then ``""``.
+
+    Note that ``keel_cms.Post`` implements no ``get_absolute_url`` at all, so every
+    keel-cms host must wire the hook — there is no working fallback for them, which
+    is precisely why the old hardcoded ``f"/blog/{slug}"`` looked correct on the one
+    host it was written for and silently wrong everywhere else.
+    """
+    dotted = _cfg("post_url_hook", None)
+    if dotted:
+        try:
+            return import_string(dotted)(post) or ""
+        except Exception:
+            return ""
+    getter = getattr(post, "get_absolute_url", None)
+    if callable(getter):
+        try:
+            return getter() or ""
+        except Exception:
+            return ""
+    return ""
+
+
+def glossary_shot_dir() -> str:
+    """Directory holding the glossary-visual renderer's output + judge verdicts.
+
+    Defaults to SignalBots' container layout (``/app/tools/glossary-viz/out``); a
+    host that mounts the renderer elsewhere sets
+    ``KEEL_CONTENT["glossary_shot_dir"]``. Resolved per call, not at import, so
+    settings actually apply.
+    """
+    return _cfg("glossary_shot_dir", "/app/tools/glossary-viz/out")

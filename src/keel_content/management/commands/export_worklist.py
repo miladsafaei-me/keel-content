@@ -50,6 +50,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 
 from keel_content.core.scope import PRIORITY_BUCKET
+from keel_content import host
 from keel_content.host import content_plan_model, market_hubs
 
 # Command modules import only when a command runs (apps already populated), so
@@ -271,7 +272,7 @@ class Command(BaseCommand):
         # (--cluster <slug>) for a single cluster's exact generation order; see
         # content-pipeline/CONTENT-PLAN.md.
         qs = (
-            qs.select_related("topic_cluster", "topic_cluster__conversion_landing")
+            qs.select_related("topic_cluster", "topic_cluster__conversion_landing", "produced_post")
             .prefetch_related(
                 "categories", "markets", "audience_roles", "audience_levels", "glossary_terms"
             )
@@ -325,6 +326,12 @@ class Command(BaseCommand):
         cluster_pos: dict[str, int] = {}
         for p in rows:
             spec = p.to_worklist_spec()
+            # The reconcile engine (tools/intent_registry.py) is stdlib-only and
+            # cannot reverse a route, so the host's real article URL has to travel
+            # with the spec. Without it the engine emits no target_url rather than
+            # the fabricated /blog/<slug> it used to guess.
+            if p.produced_post_id:
+                spec["url"] = host.post_url(p.produced_post)
             if p.target == ContentPlan.Target.GLOSSARY_TERM:
                 # Term rows go to the glossary authoring engine, not the article
                 # workflow — no visual-lead rotation, no sibling link plan.

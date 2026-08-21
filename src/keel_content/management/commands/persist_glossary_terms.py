@@ -28,10 +28,36 @@ from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from keel_content import host
 from keel_content.core import glossary_backlog
 
 STAGING_SUBDIR = "glossary-staging"
-SHOT_DIR = "/app/tools/glossary-viz/out"
+
+
+_URL_PROBE_SLUG = "keel-content-url-probe"
+
+
+def _glossary_url_prefix() -> str:
+    """The host's glossary URL prefix, e.g. ``"/trading-glossary/"``.
+
+    The emitted migration writes one ``keel_seo.Landing`` per term, i.e. it CREATES
+    URLS — so the path has to be the host's real one. It used to be hardcoded as
+    ``/trading-glossary/``, which is right on SignalBots and wrong on every other
+    host. Derived here by resolving an unsaved probe term through
+    ``host.glossary_url`` and stripping the probe slug, so a host that wires either
+    ``glossary_url_hook`` or a reversing ``get_absolute_url`` gets its own prefix and
+    SignalBots' output is unchanged. Raises rather than guessing.
+    """
+    Tag = host.tag_model()
+    url = host.glossary_url(Tag(slug=_URL_PROBE_SLUG, is_term=True))
+    if not url or not url.rstrip("/").endswith(_URL_PROBE_SLUG):
+        raise CommandError(
+            "cannot determine this host's glossary URL shape. Set KEEL_CONTENT"
+            '["glossary_url_hook"] to a dotted "(term) -> str" callable, or give the '
+            "term model a get_absolute_url that reverses its public route. Refusing "
+            "to emit a migration that creates Landing rows at a guessed path."
+        )
+    return url[: url.index(_URL_PROBE_SLUG)]
 
 
 def _staging_dir() -> Path:
@@ -95,7 +121,7 @@ class Command(BaseCommand):
         return opts["slugs"]
 
     def _verdict_passes(self, slug: str) -> bool:
-        p = Path(SHOT_DIR) / f"{slug}.verdict.json"
+        p = Path(host.glossary_shot_dir()) / f"{slug}.verdict.json"
         if not p.is_file():
             return False
         try:
@@ -181,8 +207,12 @@ class Command(BaseCommand):
 
         km = _latest_pkg_migration("keel_cms")
         ks = _latest_pkg_migration("keel_seo")
+        # Resolved BEFORE anything is written: the migration creates Landing rows,
+        # so a host that cannot name its own glossary route must fail here rather
+        # than ship a migration full of paths that 404.
+        url_prefix = _glossary_url_prefix()
         (_migrations_dir() / terms_mig).write_text(
-            _render_terms_migration(new_ids, prev, km, ks), encoding="utf-8")
+            _render_terms_migration(new_ids, prev, km, ks, url_prefix), encoding="utf-8")
         (_migrations_dir() / vis_mig).write_text(
             _render_visuals_migration(batch_visuals, terms_mig[:-3], km), encoding="utf-8")
 
@@ -212,7 +242,8 @@ def _slug(term: str) -> str:
 
 
 def _render_terms_migration(
-    new_ids: list[int], prev_migration: str, keel_cms_migration: str, keel_seo_migration: str
+    new_ids: list[int], prev_migration: str, keel_cms_migration: str, keel_seo_migration: str,
+    url_prefix: str,
 ) -> str:
     lo, hi = min(new_ids), max(new_ids)
     return f'''"""Load authored glossary terms (ids {lo}-{hi}) into blog_tag.
@@ -306,7 +337,7 @@ def load_terms(apps, schema_editor):
         if not slug or not name:
             continue
         Landing.objects.update_or_create(
-            url=f"/trading-glossary/{{slug}}",
+            url=f"{url_prefix}{{slug}}",
             defaults={{"title": f"{{name}} | Trading Glossary"}},
         )
 
@@ -322,7 +353,7 @@ def unload_terms(apps, schema_editor):
     Tag = apps.get_model("keel_cms", "Tag")
     Landing = apps.get_model("keel_seo", "Landing")
     Tag.objects.filter(slug__in=slugs, is_term=True).delete()
-    Landing.objects.filter(url__in=[f"/trading-glossary/{{s}}" for s in slugs]).delete()
+    Landing.objects.filter(url__in=[f"{url_prefix}{{s}}" for s in slugs]).delete()
 
 
 class Migration(migrations.Migration):
