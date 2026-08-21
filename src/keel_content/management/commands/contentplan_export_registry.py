@@ -12,7 +12,8 @@ hand).
 
 Glossary terms are ALSO projected (``--skip-glossary`` to omit): every
 ``Tag(is_term=True)`` is a pre-owned ``what-is`` need whose owner is its
-``/trading-glossary/<slug>`` page, and every QUEUED term — a ContentPlan row with
+own public page (resolved through ``host.glossary_url``, never guessed),
+and every QUEUED term — a ContentPlan row with
 ``target=glossary_term`` still pending — owns its need too (``owner_status=planned``:
 a what-is blog must not be planned for a term already queued for authoring). Both
 sets are queried at export time, so the projection always reflects the current
@@ -113,7 +114,7 @@ class Command(BaseCommand):
                 "scope_excludes": list(plan.scope_excludes or []),
             })
 
-        glossary_count = backlog_count = 0
+        glossary_count = backlog_count = unresolved_urls = 0
         if not opts["skip_glossary"]:
             # Every live glossary term already OWNS its what-is need. cross_market=True
             # so the collision fires from any market's keyword set (a term's meaning is
@@ -121,9 +122,14 @@ class Command(BaseCommand):
             # term page instead of a duplicate what-is blog. Queried at export time —
             # the projection always reflects the CURRENT glossary, never a snapshot.
             for term in Tag.objects.filter(is_term=True).order_by("slug"):
+                # The host owns its glossary route — see host.glossary_url. An
+                # unresolvable URL is exported empty, never guessed: reconcile
+                # verdicts quote these URLs, so a guess sends a human to a 404.
+                url = host.glossary_url(term)
+                if not url:
+                    unresolved_urls += 1
                 entries.append(self._glossary_entry(
-                    term.name, term.slug, status="published",
-                    url=f"/trading-glossary/{term.slug}",
+                    term.name, term.slug, status="published", url=url,
                 ))
                 glossary_count += 1
             # Terms QUEUED for authoring (ContentPlan target=glossary_term rows
@@ -161,6 +167,16 @@ class Command(BaseCommand):
             "entity_families": families,
             "entries": entries,
         }
+        if unresolved_urls:
+            # Not fatal — the registry is still correct for dedup, which keys on
+            # need signatures, not URLs. But every verdict quoting one of these
+            # owners will carry no link, so say it loudly once.
+            self.stderr.write(self.style.WARNING(
+                f"{unresolved_urls} glossary term(s) exported with NO owner_url: "
+                "this host's term model does not reverse its own public URL. Set "
+                'KEEL_CONTENT["glossary_url_hook"] to a dotted "(term) -> str" '
+                "callable in the host adapter."
+            ))
         text = json.dumps(registry, indent=2, ensure_ascii=False)
         if opts["out"]:
             Path(opts["out"]).expanduser().write_text(text + "\n", encoding="utf-8")

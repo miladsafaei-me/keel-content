@@ -30,6 +30,7 @@ Configuration surface (all optional)::
         "glossary_category_order": "core.services.trading_glossary.CATEGORY_ORDER",
         "glossary_surface_labels": "core.services.trading_glossary.SURFACE_LABELS",
         "market_hubs_hook": "myapp.funnel.market_hubs",  # () -> {slug: [hub, ...]}
+        "glossary_url_hook": "myapp.content_pipeline.keel_adapter.glossary_url",  # (term) -> str
     }
 """
 
@@ -229,3 +230,36 @@ def market_hubs() -> dict:
         return import_string(dotted)() or {}
     except Exception:
         return {}
+
+
+def glossary_url(term) -> str:
+    """Return the host's real public URL for one glossary term, or ``""``.
+
+    The package must never invent a term's URL: the glossary route is a host
+    decision and differs per project (SignalBots serves ``/trading-glossary/<slug>``,
+    Binary Option Trading serves ``/tag/<slug>``). Resolution order:
+
+    1. ``KEEL_CONTENT["glossary_url_hook"]`` — a dotted path to ``(term) -> str``.
+       The explicit escape hatch for a host whose term model cannot reverse its own
+       URL (Binary's ``keel_cms.Tag.get_absolute_url`` returns ``""`` because it
+       reverses ``keel_cms:`` route names the host never registers).
+    2. ``term.get_absolute_url()`` when the model implements one that returns a
+       non-empty path.
+    3. ``""`` — unknown. Callers must treat an empty URL as "no link", never
+       substitute a guess: a wrong URL in a reconcile verdict sends a human to a
+       404, which is how ``/trading-glossary/<slug>`` leaked onto every one of
+       Binary's 673 registry entries.
+    """
+    dotted = _cfg("glossary_url_hook", None)
+    if dotted:
+        try:
+            return import_string(dotted)(term) or ""
+        except Exception:
+            return ""
+    getter = getattr(term, "get_absolute_url", None)
+    if callable(getter):
+        try:
+            return getter() or ""
+        except Exception:
+            return ""
+    return ""
