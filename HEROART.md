@@ -52,7 +52,16 @@ python3 make_hero_art.py blog --og --strict --report /tmp/r.json --faults /tmp/f
 
 # a preview that touches nothing under media/
 python3 make_hero_art.py blog --out-dir /tmp/preview
+
+# sign the canvas with your own brand (two directions render a wordmark)
+python3 make_hero_art.py blog --og --strict --wordmark "Your Brand"
 ```
+
+**Pass `--wordmark` or no wordmark is drawn, and that is deliberate.** Two of the
+directions sign their canvas in the lower-left corner. The engine has no idea which site
+it is rendering for, so the name has to come from the caller; an unset value renders
+nothing, because a hero signed with the wrong brand is worse than one signed with none.
+Set it in the same command your deploy runs, not by hand afterwards.
 
 Then three host-side pieces, none of which the engine can do for you:
 

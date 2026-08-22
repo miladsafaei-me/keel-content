@@ -14,6 +14,7 @@ import hashlib
 import html
 import re
 
+from . import constants
 from .constants import H, MONO, SANS, SERIF, W
 
 # Safe area for card covers. Nothing may sit outside it unless leaving the frame is
@@ -268,6 +269,15 @@ def shadow_def(uid, dy=26, blur=24, op=0.55):
 
 
 def wordmark(p, x=72, y=622, size=19):
+    """Sign the canvas with the consuming site's wordmark, or not at all.
+
+    Read at call time rather than import time so a consumer can set
+    ``constants.WORDMARK`` after the module is imported. An unset value renders
+    nothing, which is the correct default for a package with several consumers.
+    """
+    name = (constants.WORDMARK or "").strip()
+    if not name:
+        return ""
     return (f'<text x="{x}" y="{y}" font-family="{SANS}" font-size="{size}" '
-            f'font-weight="700" fill="{p["ink"]}" opacity="0.92">Revenika'
+            f'font-weight="700" fill="{p["ink"]}" opacity="0.92">{esc(name)}'
             f'<tspan fill="{p["accent"]}">.</tspan></text>')

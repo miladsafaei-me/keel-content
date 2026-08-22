@@ -161,7 +161,15 @@ def main(argv=None, paths=None):
     ap.add_argument("--faults", help="write every layout fault to this file")
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero when the layout audit finds anything")
+    ap.add_argument("--wordmark", default=None,
+                    help="brand name signed into the corner of the directions that "
+                         "sign their canvas; unset renders no wordmark")
     args = ap.parse_args(argv)
+
+    if args.wordmark is not None:
+        from . import constants as _constants
+
+        _constants.WORDMARK = args.wordmark
 
     items, adapt, category_of = load_items(args.kind, paths)
     if args.posts:
