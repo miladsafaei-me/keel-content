@@ -11,6 +11,9 @@ requires-python = ">=3.11"
 authors = [{ name = "Milad Safaei", email = "miladsafaei.me@gmail.com" }]
 license = { text = "UNLICENSED" }
 dependencies = [
+    # HTML -> Markdown for corpora migrated from another CMS as rendered HTML
+    # (core/html_to_markdown.py). Deterministic; no model involved.
+    "markdownify>=0.13",
     "Django>=4.2",
     "anthropic>=0.40",
     "requests>=2.28",
