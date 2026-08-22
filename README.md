@@ -26,6 +26,14 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   glossaries, country/regulation pages, landings — not only its blog. It is fully
   deterministic (no model calls) and emits a tiered map so planning stages read a small
   overview plus the one cluster they need, instead of the whole corpus.
+- **The boilerplate detector** (`keel_content.core.boilerplate`): finds the components a
+  page corpus publishes more than once — a paragraph, a section heading or a rendered
+  figure that is byte-identical across N pages. Repeated *structure* (anchors, column
+  headers, block types) is the contract that makes a section comparable and is never
+  reported; repeated *substance* is what makes a section read as generated, and is.
+  Business-blind, Django-free and stdlib-only: the caller extracts the text and hands
+  it a fingerprint per figure, and owns the thresholds, because "too many" is an
+  editorial judgement that differs per section.
 - **The generator + parsers** (`keel_content.tools`): the JS generation/brief/reconcile
   workflows and the worklist parsers.
 - **Subject-driven card and hero art** (`keel_content.heroart`): a second, newer image
