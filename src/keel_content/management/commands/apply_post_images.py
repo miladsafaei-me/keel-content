@@ -30,6 +30,7 @@ from django.db import transaction
 
 from keel_content import host
 from keel_content.core.pending_images import apply_rendered_images, has_pending_anchors
+from keel_content.core.preflight import require_write_hooks
 from keel_content.host import post_model
 
 
@@ -61,6 +62,11 @@ class Command(BaseCommand):
         from keel_content.core.hero.pipeline import render_and_store, spec_from_dict
 
         dry = opts["dry_run"]
+        # Prove the host's re-render hook imports cleanly BEFORE the first save: it
+        # resolves lazily at call time, so a misconfigured host would otherwise write
+        # row #1 and die on it, leaving part of the batch saved and un-rendered.
+        if not dry:
+            require_write_hooks("refresh_rendered_hook")
         ready = skipped = failed = 0
 
         for path in sorted(work_dir.glob("*.bundle.json")):

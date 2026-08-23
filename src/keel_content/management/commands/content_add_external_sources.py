@@ -29,6 +29,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from keel_content import host
 from keel_content.core.external_links import apply_external_sources
+from keel_content.core.preflight import require_write_hooks
 
 Post = host.post_model()
 
@@ -55,6 +56,12 @@ class Command(BaseCommand):
             raise CommandError(f"unreadable JSON: {exc}")
         if not isinstance(entries, list):
             raise CommandError("top-level JSON must be a list of {slug, external_sources}")
+
+        # Prove the host hooks this loop touches import cleanly BEFORE the first
+        # save: they resolve lazily at call time, so a misconfigured host would
+        # otherwise rewrite row #1 and die on it, leaving a partly-rewritten corpus.
+        if not dry:
+            require_write_hooks("prepare_storage_hook", "refresh_rendered_hook")
 
         updated = skipped = missing = 0
         for entry in entries:

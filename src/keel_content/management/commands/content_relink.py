@@ -10,7 +10,10 @@ command provides the equivalent round-trip for correcting live posts:
 
 ``export`` emits, per topic cluster, each post's ``slug``/``role``/``title``/declared
 ``intent`` (+ scope fences) and a ``body_markdown`` with existing blog->blog links
-stripped back to plain text — the exact shape the linking pass reads. ``apply`` takes
+stripped back to plain text — the exact shape the linking pass reads. A post whose
+``content_markdown_source`` is EMPTY (an HTML-only corpus migrated from another CMS)
+is a hard error, not an entry with an empty body: see ``_guard_empty_bodies`` and
+``--skip-empty-bodies``. ``apply`` takes
 the pass's ``{"edges": {slug: [{anchor, target_slug}]}}`` plan, resets each post's body
 to its clean state, inserts the new edges via the same deterministic ``apply_internal_links``
 inserter used at publish, then rebuilds ``content_raw`` + ``content_rendered`` exactly as
@@ -44,6 +47,7 @@ from keel_content.core.internal_links import (
     apply_internal_links,
     strip_internal_blog_links,
 )
+from keel_content.core.preflight import require_write_hooks
 
 ContentPlan = host.content_plan_model()
 Post = host.post_model()
@@ -136,6 +140,53 @@ def _registry_verdict(registry: AnchorRegistry, anchor: str, target_url: str) ->
     return None
 
 
+def _has_body(row: dict) -> bool:
+    return bool((row.get("body_markdown") or "").strip())
+
+
+def _guard_empty_bodies(rows: list[dict], skip_empty: bool, report) -> set[str]:
+    """Refuse (or, on request, exclude) posts that have no Markdown body to link into.
+
+    ``content_relink`` reads and writes ``Post.content_markdown_source`` and nothing
+    else. A corpus migrated from another CMS stores rendered HTML in ``content_raw``
+    and leaves that field empty on every row, so the export happily emits
+    ``body_markdown: ""`` for each one and ``apply`` inserts nothing — a failure that
+    looks EXACTLY like "this cluster has no link opportunities". Measured 2026-08-22
+    on 1,042 live articles; only an instruction to verify anchors against the body
+    stopped a linking pass from inventing them.
+
+    Default is a hard refusal naming the count, because an operator who does not know
+    a conversion step exists has no way to read an empty export correctly.
+    ``--skip-empty-bodies`` is the deliberate escape hatch for a partly-converted
+    corpus: the unconvertible posts are left OUT of the export and their count is
+    reported, which is honest, rather than shipped as content-free entries.
+
+    Returns the slugs to exclude (empty unless ``skip_empty``).
+    """
+    empty = [r["slug"] for r in rows if not _has_body(r)]
+    if not empty:
+        return set()
+    shown = ", ".join(empty[:5]) + (f", ... (+{len(empty) - 5} more)" if len(empty) > 5 else "")
+    if skip_empty:
+        report(
+            f"excluded {len(empty)} of {len(rows)} post(s) from the export: no Markdown "
+            f"body to link into ({shown}). They stay invisible to every Markdown pass "
+            "until `manage.py backfill_markdown_source` can convert them."
+        )
+        return set(empty)
+    raise CommandError(
+        f"{len(empty)} of {len(rows)} selected post(s) have an EMPTY Markdown body, so "
+        "there is nothing for a linking pass to read or for apply to write into: "
+        f"{shown}. This is what an HTML-only corpus looks like — content_relink reads "
+        "Post.content_markdown_source, and a body migrated from another CMS lives in "
+        "content_raw instead. Run `manage.py backfill_markdown_source --dry-run` to "
+        "see how much of it converts, then without --dry-run to fill the field, and "
+        "pass --skip-empty-bodies to export only what converted. Refusing to export "
+        "empty bodies: a linking pass cannot tell them apart from an article that "
+        "genuinely offers no anchors."
+    )
+
+
 class Command(BaseCommand):
     help = "Export/apply blog->blog internal-link plans for published pipeline posts."
 
@@ -145,6 +196,14 @@ class Command(BaseCommand):
         parser.add_argument("--plan", default=None, help="apply: path to the edge-plan JSON.")
         parser.add_argument("--backup", default=None, help="apply: path to write originals before mutating.")
         parser.add_argument("--dry-run", action="store_true", help="apply: report without writing.")
+        parser.add_argument(
+            "--skip-empty-bodies",
+            action="store_true",
+            help="export: leave out posts whose content_markdown_source is empty, "
+            "reporting how many. Without it such a post is a hard error — an empty "
+            "body exported as content is indistinguishable from an article with no "
+            "link opportunities.",
+        )
         parser.add_argument(
             "--scope",
             choices=["cluster", "cross-cluster"],
@@ -157,12 +216,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         if opts["mode"] == "export":
-            return self._export(opts["cluster"], opts["scope"])
+            return self._export(opts["cluster"], opts["scope"], opts["skip_empty_bodies"])
         return self._apply(opts["plan"], opts["backup"], opts["dry_run"], opts["cluster"], opts["scope"])
 
-    def _export(self, cluster: str | None, scope: str = "cluster"):
+    def _export(self, cluster: str | None, scope: str = "cluster", skip_empty: bool = False):
         if scope == "cross-cluster":
-            return self._export_cross_cluster(cluster)
+            return self._export_cross_cluster(cluster, skip_empty)
         plans = _produced_plans(cluster)
         posts = {p.id: p for p in Post.objects.filter(id__in=[pl.produced_post_id for pl in plans])}
         clusters: dict[str, dict] = {}
@@ -184,9 +243,17 @@ class Command(BaseCommand):
                     "body_markdown": strip_internal_blog_links(post.content_markdown_source or ""),
                 }
             )
-        self.stdout.write(json.dumps({"clusters": list(clusters.values())}, ensure_ascii=False))
+        exported = [p_ for c in clusters.values() for p_ in c["posts"]]
+        excluded = _guard_empty_bodies(exported, skip_empty, self.stderr.write)
+        out = [
+            {**c, "posts": [p_ for p_ in c["posts"] if p_["slug"] not in excluded]}
+            for c in clusters.values()
+        ]
+        self.stdout.write(
+            json.dumps({"clusters": [c for c in out if c["posts"]]}, ensure_ascii=False)
+        )
 
-    def _export_cross_cluster(self, cluster: str | None):
+    def _export_cross_cluster(self, cluster: str | None, skip_empty: bool = False):
         """Per source post, offer the pillar of every OTHER active cluster as candidates.
 
         Deliberately never the source's own cluster mates (that is the ``cluster``
@@ -218,7 +285,9 @@ class Command(BaseCommand):
                     "candidate_pillars": candidates,
                 }
             )
-        self.stdout.write(json.dumps({"posts": out_posts}, ensure_ascii=False))
+        excluded = _guard_empty_bodies(out_posts, skip_empty, self.stderr.write)
+        kept = [p_ for p_ in out_posts if p_["slug"] not in excluded]
+        self.stdout.write(json.dumps({"posts": kept}, ensure_ascii=False))
 
     def _stamp(self, cluster: str | None, dry_run: bool) -> None:
         """Record that this cluster has been relinked at its current article count.
@@ -331,23 +400,15 @@ class Command(BaseCommand):
             with open(backup_path, "w", encoding="utf-8") as fh:
                 json.dump(backup, fh, ensure_ascii=False, indent=2)
 
-        # Resolve the host's re-render hook BEFORE the first write. It used to be
-        # resolved lazily inside the loop, per post — so a host that had not
-        # configured `refresh_rendered_hook` (and therefore fell through to the
-        # package default "blog.tasks.refresh_article_rendered", SignalBots' app
-        # layout) saved post #1, then died on ModuleNotFoundError and left the rest
-        # untouched. That is a PARTIAL REWRITE of a live corpus, recoverable only
-        # from --backup. Failing here costs nothing and cannot corrupt anything.
+        # Resolve BOTH host hooks this loop touches before the first write. They used
+        # to resolve lazily inside it, per post — so a host that had not configured
+        # `refresh_rendered_hook` (and therefore fell through to the package default
+        # "blog.tasks.refresh_article_rendered", SignalBots' app layout) saved post #1,
+        # then died on ModuleNotFoundError and left the rest untouched. That is a
+        # PARTIAL REWRITE of a live corpus, recoverable only from --backup. Failing
+        # here costs nothing and cannot corrupt anything.
         if not dry_run:
-            try:
-                host.resolve_refresh_article_rendered()
-            except Exception as exc:
-                raise CommandError(
-                    "cannot resolve the host's article re-render hook, so refusing to "
-                    "write: every post would be saved and then fail to re-render. Set "
-                    'KEEL_CONTENT["refresh_rendered_hook"] to a dotted "(post) -> None" '
-                    f"callable. Underlying error: {exc}"
-                ) from exc
+            require_write_hooks("prepare_storage_hook", "refresh_rendered_hook")
 
         totals = {"posts": 0, "inserted": 0, "dropped_self": 0, "dropped_unknown": 0,
                   "skipped": 0, "rewrites": 0, "rewrites_skipped": 0}

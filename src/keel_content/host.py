@@ -101,6 +101,65 @@ def market_model():
     return django_apps.get_model(_cfg("market_model", "blog.Market"))
 
 
+class HookResolutionError(RuntimeError):
+    """A host hook a write loop is about to need cannot be imported.
+
+    Raised by :func:`preflight_hooks` BEFORE the caller's first row, never after.
+    Management commands turn it into a ``CommandError`` via
+    ``core.preflight.require_write_hooks``.
+    """
+
+
+# Every hook whose first use sits inside a write loop, with the default that applies
+# when the host configures nothing. A lazily-resolved hook is not a bug in isolation —
+# it is a bug the moment it is first touched mid-mutation, because the rows already
+# written stay written. Measured 2026-08-22: Martiland had not set
+# ``refresh_rendered_hook``, fell through to SignalBots' app layout, saved post #1 of
+# 339 and then died on ModuleNotFoundError, leaving a live corpus half-rewritten.
+_WRITE_HOOKS = {
+    "refresh_rendered_hook": "blog.tasks.refresh_article_rendered",
+    "prepare_storage_hook": "blog.markdown_convert.prepare_pipeline_content_for_storage",
+    "markdown_html_hook": "blog.markdown_convert.markdown_to_blog_html",
+    "featured_image_url_hook": "core.media_urls.featured_image_absolute_url",
+}
+
+
+def resolve_hook(name: str):
+    """Import and return the callable behind one ``KEEL_CONTENT`` hook, without calling it."""
+    if name not in _WRITE_HOOKS:
+        raise KeyError(
+            f"{name!r} is not a write-path hook; known hooks: {', '.join(sorted(_WRITE_HOOKS))}"
+        )
+    return import_string(_cfg(name, _WRITE_HOOKS[name]))
+
+
+def preflight_hooks(*names: str) -> None:
+    """Prove every named hook is importable, or raise :class:`HookResolutionError`.
+
+    Call this once, before the first write of any command that mutates more than one
+    row. Failing here costs nothing; failing on row #2 costs a half-rewritten corpus
+    that is recoverable only from a backup file.
+    """
+    broken = []
+    for name in names:
+        try:
+            resolve_hook(name)
+        except Exception as exc:
+            broken.append((name, _cfg(name, _WRITE_HOOKS.get(name, "")), exc))
+    if not broken:
+        return
+    lines = [
+        "cannot resolve the host hook(s) this run needs, so refusing to write anything:"
+    ]
+    for name, dotted, exc in broken:
+        lines.append(f'  KEEL_CONTENT["{name}"] = {dotted!r} -> {exc}')
+    lines.append(
+        "Set each one to a reachable dotted path in the host's settings. Refusing up "
+        "front rather than discovering it after the first row has already been saved."
+    )
+    raise HookResolutionError("\n".join(lines))
+
+
 def resolve_refresh_article_rendered():
     """Import and return the host's re-render callable WITHOUT calling it.
 
@@ -109,8 +168,7 @@ def resolve_refresh_article_rendered():
     on every call, which is fine in isolation but means a misconfigured host only
     discovers the problem after it has already saved something.
     """
-    dotted = _cfg("refresh_rendered_hook", "blog.tasks.refresh_article_rendered")
-    return import_string(dotted)
+    return resolve_hook("refresh_rendered_hook")
 
 
 def refresh_article_rendered(post) -> None:
