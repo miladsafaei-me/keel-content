@@ -175,3 +175,22 @@ class ConflictDetectionTests(SimpleTestCase):
             {t["target_path"] for t in conflicts[0]["targets"]},
             {"/blog/broker-a", "/blog/broker-b"},
         )
+
+
+class ImageExclusionTests(SimpleTestCase):
+    """``![alt](/media/x.jpg)`` has a link's shape and none of its meaning."""
+
+    def _links(self, body):
+        from keel_content.core.anchor_registry import _iter_internal_links
+
+        return list(_iter_internal_links(body))
+
+    def test_a_markdown_image_is_not_an_anchor(self):
+        self.assertEqual(self._links("![trust-wallet](/media/wp/2025/10/trust-wallet-1.jpeg)"), [])
+
+    def test_a_real_link_on_the_same_line_as_an_image_still_counts(self):
+        body = "![shot](/media/a.png) see [the guide](/blog/x)"
+        self.assertEqual(self._links(body), [("the guide", "/blog/x")])
+
+    def test_an_html_image_was_never_matched_and_still_is_not(self):
+        self.assertEqual(self._links('<img src="/media/a.png" alt="a">'), [])

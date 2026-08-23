@@ -148,7 +148,12 @@ def normalize_anchor(text: str) -> str:
 # A Markdown link whose target may or may not be internal — filtered by the "/"
 # prefix check in ``_iter_internal_links``, same division of labor as
 # ``internal_links.py``'s own regexes (match broadly, decide narrowly).
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+# A Markdown LINK, never an image: ``![alt](/media/x.jpg)`` carries the same
+# bracket-paren shape but its text is alt text, not an anchor, and its target is
+# an asset. Counting those made a corpus converted from HTML look riddled with
+# conflicts — one filename claimed by a dozen "anchors" — and buried the real
+# ones. The lookbehind is the whole fix.
+_MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)")
 # An HTML anchor tag; ``href`` may appear anywhere among the attributes, and the
 # inner text may itself carry markup (e.g. ``<a href="/x"><strong>Y</strong></a>``)
 # which ``_strip_tags`` below cleans off the captured anchor text.
