@@ -36,12 +36,14 @@ from .directions import BY_KEY, DIRECTIONS, Direction
 from .draw import MAX_LABEL, MIN_LABEL, seedof
 from .inline import illustration, token_css, variant_for
 from .choose import assign, load_manifest, score
+from .skin import PASTEL, Skin
 from .subject import Subject, from_blog_post, from_glossary_term
 from .worlds import HUE_WHEEL, allocate, palette
 
 __all__ = [
     "BY_KEY", "DIRECTIONS", "Direction", "HUE_WHEEL", "MAX_LABEL", "MIN_LABEL",
-    "Paths", "Subject", "allocate", "assign", "check", "from_blog_post",
+    "PASTEL", "Paths", "Skin", "Subject", "allocate", "assign", "check",
+    "from_blog_post",
     "illustration", "token_css", "variant_for",
     "from_glossary_term", "load_manifest", "main", "palette", "score", "seedof",
 ]

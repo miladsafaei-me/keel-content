@@ -96,6 +96,68 @@ page-level spread. `--no-order` ignores it entirely.
 **Track the output in git** (`git add -f` if `media/` is ignored) so a deploy that
 resets the checkout carries the art with it.
 
+## 2b. Skins: when a site needs a different picture language
+
+Everything in section 5b and section 6 is about variety *inside* one visual identity.
+A second consuming site may not share that identity at all, and for that there is a
+`Skin`.
+
+A skin carries the four decisions that belong to a site, and none that belong to the
+engine:
+
+| field | what it decides |
+|---|---|
+| `directions` | the motif pack — what kinds of picture the site draws at all |
+| `surfaces` | the grounds spread across a feed page |
+| `palette` | `(tone, surface) -> {role: colour}`; the roles are the engine's contract, their values are the site's |
+| `score`, `allocate` | which motif each item gets and which tone, still pure functions of the content plus a hash of the slug |
+
+Plus `distance` (tone separation, for the feed-spread report), `worlds` (tones a
+`--manifest` may pin by name), `blocked` and `wordmark`. Pass one to `main`:
+
+```python
+from keel_content.heroart import Paths, main
+from myproject.pipeline.my_skin import SKIN
+
+raise SystemExit(main(paths=PATHS, skin=SKIN))
+```
+
+Omitting it renders `PASTEL` — the 22 editorial motifs, four pastel grounds and
+40-step hue wheel this package shipped before skins existed — so every host that
+predates the seam is unaffected. That was verified rather than assumed: Revenika's
+204-post corpus renders byte-identical across all 408 files before and after the
+refactor.
+
+**The tone axis is deliberately untyped.** `PASTEL` uses integer hues off a curated
+wheel. A site whose colours *mean* something uses named tones instead and supplies a
+`distance` for them; the engine never does arithmetic on a tone, it hands it to
+`palette` and prints it in the report.
+
+### What a skin does not get to change
+
+The discipline, which is independent of taste and is most of the value here: one
+assignment pass over the whole corpus, the per-direction cap and floor, the
+per-cluster penalty, the feed-window limit, determinism, and the layout audit. A skin
+that trips the audit fixes its own directions; it cannot loosen the check.
+
+### The measured case for the seam
+
+Written for binaryoption.trading, whose site is dark-only, gold-accented, and draws
+every figure as a measurement on a hairline grid. Three things made a recolour
+impossible and are worth stating because they are the test of whether a *new* site
+needs a skin or just a `--surfaces` narrowing:
+
+* **Ground.** Two of the four pastel surfaces are near-white sheets. On a listing
+  whose page is `#050810` a white card is a foreign object.
+* **Colour.** `worlds.HUE_WHEEL` deliberately excludes 36-150 degrees. That site's
+  gold is hue 51 and its green is hue 142, so the engine's colour model could not
+  produce its brand at all — no amount of hand-pinning reaches it.
+* **Meaning.** On `PASTEL` colour is decorative and per-slug. There, green, red and
+  gold mean won, lost and the threshold everywhere else on the site, so a per-slug
+  violet card would state something false.
+
+One of those is a reason to narrow `--surfaces`. All three together are a skin.
+
 ## 3. Hard rules
 
 1. **Words come from the Subject, never from the direction.** A direction supplies

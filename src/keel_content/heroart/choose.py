@@ -216,12 +216,14 @@ def fallback_direction(subject, keys, role=""):
 NO_CONTAINER = ("split", "plate")
 
 
-def assign(entries, keys, order=None, surfaces=("tinted",)):
-    """Assign a direction and a hue to every item, spread across the corpus.
+def assign(entries, keys, order=None, surfaces=None, skin=None):
+    """Assign a direction and a tone to every item, spread across the corpus.
 
     `entries` is a list of (subject, cluster, role). `order` is the slugs in the
     order the feed publishes them, which is what decides which cards a reader sees
-    side by side. Returns {slug: (direction, hue)}.
+    side by side. `skin` supplies the scorer, the tone allocator and the surface
+    allocator; without one the pastel defaults in this module are used, which is what
+    every host did before skins existed. Returns {slug: (direction, tone, surface)}.
 
     Four pressures act at once: the per-item score decides what each post wants, a
     corpus cap and floor keep any one motif from taking over or dying out, a
@@ -230,6 +232,7 @@ def assign(entries, keys, order=None, surfaces=("tinted",)):
     limit stops one motif from filling a single page even when every corpus-wide
     number looks healthy.
     """
+    scorer = skin.score if skin else score
     cap = max(4, int(len(entries) * CAP_SHARE))
     order = order or [s.key for s, _c, _r in entries]
     at = {slug: i for i, slug in enumerate(order)}
@@ -241,7 +244,7 @@ def assign(entries, keys, order=None, surfaces=("tinted",)):
 
     ranked = []
     for subject, cluster, role in entries:
-        scores = sorted(((score(subject, k, role), k) for k in keys), reverse=True)
+        scores = sorted(((scorer(subject, k, role), k) for k in keys), reverse=True)
         margin = scores[0][0] - (scores[1][0] if len(scores) > 1 else 0)
         ranked.append((margin, subject, cluster, role, [k for _, k in scores]))
     ranked.sort(key=lambda r: (-r[0], r[1].key))
@@ -302,23 +305,39 @@ def assign(entries, keys, order=None, surfaces=("tinted",)):
 
         def cost(slug):
             subject, role = subjects[slug]
-            return score(subject, out[slug], role) - score(subject, starved, role)
+            return scorer(subject, out[slug], role) - scorer(subject, starved, role)
 
         best = min(donors, key=cost)
-        if score(subjects[best][0], starved, subjects[best][1]) <= -50:
+        if scorer(subjects[best][0], starved, subjects[best][1]) <= -50:
             break
         taken_at[out[best]].remove(at[best])
         taken_at.setdefault(starved, []).append(at[best])
         out[best] = starved
 
-    # Hue last, walked in feed order rather than per post, so the colours a reader
-    # sees together are the ones held apart.
+    # Tone last, walked in feed order rather than per post, so the colours a reader
+    # sees together are the ones held apart. The allocators are handed the subject as
+    # well as the slug: a skin whose colour is decorative ignores it, and a skin whose
+    # colour means something reads it.
     walk = sorted(out, key=lambda slug: at[slug])
-    hues = allocate(walk)
-    skins = allocate_surfaces([(slug, out[slug]) for slug in walk], list(surfaces),
-                              blocked={"panel": NO_CONTAINER})
-    return {slug: (direction, hues[slug], skins[slug])
+    by_slug = {s.key: s for s, _c, _r in entries}
+    feed = [(slug, by_slug[slug], out[slug]) for slug in walk]
+    choices = list(surfaces or (skin.surfaces if skin else ("tinted",)))
+    blocked = skin.blocked if skin else {"panel": NO_CONTAINER}
+    tones = (skin.allocate if skin else _default_allocate)(feed)
+    grounds = (skin.allocate_surfaces if skin else _default_surfaces)(
+        feed, choices, blocked)
+    return {slug: (direction, tones[slug], grounds[slug])
             for slug, direction in out.items()}
+
+
+def _default_allocate(feed):
+    """The pastel hue comb, for a caller that passed no skin."""
+    return allocate([slug for slug, _subject, _direction in feed])
+
+
+def _default_surfaces(feed, choices, blocked):
+    return allocate_surfaces([(slug, direction) for slug, _s, direction in feed],
+                             choices, blocked=blocked)
 
 
 def load_manifest(path):

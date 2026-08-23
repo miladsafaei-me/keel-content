@@ -23,13 +23,9 @@ import tempfile
 
 from . import audit
 from . import subject as subject_mod
-from .directions import BY_KEY, DIRECTIONS
 from .draw import seedof
 from .choose import assign, load_manifest
-from .worlds import SURFACES, WORLDS, palette
-
-#: Every surface, spread across each page. A host narrows this with --surfaces.
-DEFAULT_SURFACES = tuple(SURFACES)
+from .skin import PASTEL
 
 @dataclasses.dataclass
 class Paths:
@@ -111,16 +107,16 @@ def rasterise(chrome, svg_path, jpg_path):
         tmp.unlink(missing_ok=True)
 
 
-def feed_spread(report, order):
+def feed_spread(report, order, skin):
     """How the assignment reads on the page, which is the only view that matters.
 
     Corpus-wide counts can look balanced while one page carries five of the same
     motif or two cards in the same colour, so the numbers reported here are measured
     over the ten-card windows the feed actually paginates into.
     """
-    from .worlds import hue_distance
+    hue_distance = skin.distance
 
-    pick = {r["slug"]: (r["direction"], r["hue"]) for r in report}
+    pick = {r["slug"]: (r["direction"], r["tone"]) for r in report}
     seq = [pick[s] for s in order if s in pick]
     pages = [seq[i:i + 10] for i in range(0, len(seq), 10)]
     dup = sum(1 for p in pages
@@ -135,9 +131,16 @@ def feed_spread(report, order):
             f"{twins}/{max(len(seq) - 1, 1)} neighbouring cards on the same motif")
 
 
-def main(argv=None, paths=None):
-    """Render one host's corpus. `paths` is the only thing the engine needs to know."""
+def main(argv=None, paths=None, skin=PASTEL):
+    """Render one host's corpus.
+
+    `paths` says where the content and the art live; `skin` says what the art looks
+    like. Both belong to the host — the engine supplies the discipline around them:
+    one assignment pass over the whole corpus, page-window balancing, determinism,
+    and the layout audit that reads the finished SVG.
+    """
     paths = paths or Paths()
+    default_surfaces = tuple(skin.surfaces)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("kind", choices=["blog", "glossary"])
     ap.add_argument("--manifest", help="JSON of per-slug direction/world choices")
@@ -157,7 +160,7 @@ def main(argv=None, paths=None):
     ap.add_argument("--report", help="write a JSON report of every choice made")
     ap.add_argument("--surfaces", nargs="*",
                     help=f"grounds to spread across the feed "
-                         f"(default: {' '.join(DEFAULT_SURFACES)})")
+                         f"(default: {' '.join(default_surfaces)})")
     ap.add_argument("--faults", help="write every layout fault to this file")
     ap.add_argument("--strict", action="store_true",
                     help="exit non-zero when the layout audit finds anything")
@@ -166,10 +169,12 @@ def main(argv=None, paths=None):
                          "sign their canvas; unset renders no wordmark")
     args = ap.parse_args(argv)
 
-    if args.wordmark is not None:
-        from . import constants as _constants
+    # --wordmark overrides the skin's own, including with an empty string, which is
+    # how a proof sheet is rendered unsigned.
+    from . import constants as _constants
 
-        _constants.WORDMARK = args.wordmark
+    _constants.WORDMARK = (args.wordmark if args.wordmark is not None
+                           else skin.wordmark)
 
     items, adapt, category_of = load_items(args.kind, paths)
     if args.posts:
@@ -193,7 +198,8 @@ def main(argv=None, paths=None):
             order = data["order"] if isinstance(data, dict) else data
 
     manifest = load_manifest(args.manifest)
-    valid = set(BY_KEY)
+    by_key = skin.by_key
+    valid = set(by_key)
 
     if args.out_dir:
         base = pathlib.Path(args.out_dir)
@@ -223,21 +229,24 @@ def main(argv=None, paths=None):
             break
 
     assigned = assign(pending, sorted(valid), order=order,
-                      surfaces=tuple(args.surfaces or DEFAULT_SURFACES))
+                      surfaces=tuple(args.surfaces or default_surfaces), skin=skin)
     report, faults = [], []
     for subject, _cluster, _role in pending:
         slug = subject.key
-        key, hue, surface = assigned[slug]
+        key, tone, surface = assigned[slug]
         source = "auto"
         entry = manifest.get(slug) or {}
         if entry.get("direction") in valid:
             key, source = entry["direction"], "manifest"
-        if entry.get("world") in WORLDS:
-            hue = WORLDS[entry["world"]]["hue"]
-        if isinstance(entry.get("hue"), int):
-            hue = entry["hue"]
-        direction = BY_KEY[key]
-        colours = palette(hue, surface)
+        if entry.get("world") in skin.worlds:
+            tone = skin.worlds[entry["world"]]
+        # `hue` is the pastel skin's name for a tone and stays supported; `tone` is
+        # the name every skin answers to.
+        for field in ("tone", "hue"):
+            if field in entry and not isinstance(entry[field], bool):
+                tone = entry[field]
+        direction = by_key[key]
+        colours = skin.palette(tone, surface)
         hero_svg = direction.hero(subject, colours, f"h{seedof(slug) % 999983}_")
         cover_svg = direction.cover(subject, colours, f"c{seedof(slug) % 999983}_")
         # Check the image that was produced, not the intent behind it: every layout
@@ -251,7 +260,7 @@ def main(argv=None, paths=None):
         (card_dir / f"{slug}.svg").write_text(cover_svg, encoding="utf-8")
         if args.og:
             rasterise(chrome, hero_dir / f"{slug}.svg", og_dir / f"{slug}.jpg")
-        report.append(dict(slug=slug, direction=key, hue=hue, surface=surface,
+        report.append(dict(slug=slug, direction=key, tone=tone, surface=surface,
                            source=source,
                            items=subject.n, weights=bool(subject.weights)))
     count = len(report)
@@ -263,10 +272,10 @@ def main(argv=None, paths=None):
     print(f"rendered {count} {args.kind} items"
           + (f", skipped {len(skipped)} with no usable subject" if skipped else ""))
     print("directions:", dict(Counter(r["direction"] for r in report)))
-    print("distinct hues:", len({r["hue"] for r in report}), "of", count)
+    print("distinct tones:", len({str(r["tone"]) for r in report}), "of", count)
     print("surfaces:", dict(Counter(r["surface"] for r in report)))
     if order:
-        print("feed spread:", feed_spread(report, order))
+        print("feed spread:", feed_spread(report, order, skin))
     print("hand-pinned by manifest:", sum(1 for r in report if r["source"] == "manifest"))
     if skipped:
         print("skipped:", ", ".join(skipped[:12]) + ("…" if len(skipped) > 12 else ""))
