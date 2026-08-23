@@ -94,34 +94,21 @@ class Quad:
                        for i in range(len(pts)))) / 2
 
     def overlap(self, other):
-        """Area shared with another convex polygon (Sutherland-Hodgman).
+        """Area shared with another convex polygon (Sutherland-Hodgman)."""
+        out = _clip_poly(self.pts, other.pts)
+        return Quad(out).area if out else 0.0
 
-        Both polygons are wound the same way first: the corners arrive from four
-        different code paths and a reversed winding turns the clip inside out, which
-        reports every element as outside the frame rather than inside it.
+    def clipped_to(self, other):
+        """This quad with everything outside `other` removed, or None if nothing
+        of it survives.
+
+        A group under `clip-path` is only drawn where the clip is, so measuring its
+        children at full extent reports content leaving a frame it never reaches.
+        The engine emits clips as a plain rect in canvas space for exactly this
+        reason — see `_clips`.
         """
-        out = _wound(self.pts)
-        clip = _wound(other.pts)
-        for i in range(len(clip)):
-            a, b = clip[i], clip[(i + 1) % len(clip)]
-            ex, ey = b[0] - a[0], b[1] - a[1]
-
-            def side(pt):
-                return ex * (pt[1] - a[1]) - ey * (pt[0] - a[0])
-
-            clipped, prev = [], out[-1] if out else None
-            for cur in out:
-                if side(cur) >= 0:
-                    if side(prev) < 0:
-                        clipped.append(_cut(prev, cur, a, b))
-                    clipped.append(cur)
-                elif side(prev) >= 0:
-                    clipped.append(_cut(prev, cur, a, b))
-                prev = cur
-            out = clipped
-            if not out:
-                return 0.0
-        return Quad(out).area
+        out = _clip_poly(self.pts, other.pts)
+        return Quad(out) if out and Quad(out).area > 0.5 else None
 
     def grown(self, by):
         return self.shrunk(-by)
@@ -138,6 +125,37 @@ class Quad:
         xs = [p[0] for p in self.pts]
         ys = [p[1] for p in self.pts]
         return f"({min(xs):.0f},{min(ys):.0f})-({max(xs):.0f},{max(ys):.0f})"
+
+
+def _clip_poly(subject, window):
+    """`subject` polygon clipped by convex `window`, as a point list.
+
+    Both polygons are wound the same way first: the corners arrive from four
+    different code paths and a reversed winding turns the clip inside out, which
+    reports every element as outside the frame rather than inside it.
+    """
+    out = _wound(subject)
+    clip = _wound(window)
+    for i in range(len(clip)):
+        a, b = clip[i], clip[(i + 1) % len(clip)]
+        ex, ey = b[0] - a[0], b[1] - a[1]
+
+        def side(pt):
+            return ex * (pt[1] - a[1]) - ey * (pt[0] - a[0])
+
+        clipped, prev = [], out[-1] if out else None
+        for cur in out:
+            if side(cur) >= 0:
+                if side(prev) < 0:
+                    clipped.append(_cut(prev, cur, a, b))
+                clipped.append(cur)
+            elif side(prev) >= 0:
+                clipped.append(_cut(prev, cur, a, b))
+            prev = cur
+        out = clipped
+        if not out:
+            return []
+    return out
 
 
 def _signed_area(pts):
@@ -384,18 +402,57 @@ def _shape_box(el, chain, grads=None):
     return (quad, True) if approx else quad
 
 
-def _walk(node, chain, order, texts, shapes, grads=None):
+CLIP_REF = re.compile(r"url\(#([^)]+)\)")
+
+
+def _clips(root):
+    """Every `clipPath` the document defines, as a quad, by id.
+
+    Only a clipPath holding a single rect is read, and it is read in canvas space.
+    That is not a limitation the engine has to work around — it is the shape a crop
+    actually is, and emitting it any other way would mean the picture and the ruler
+    disagree. A group that crops a motif therefore carries the clip and nothing
+    else, with its own transform on an inner group, so the rect below never has to
+    be pushed through a transform chain to be understood.
+    """
+    out = {}
+    for node in root.iter():
+        if node.tag.replace(SVG_NS, "") != "clipPath":
+            continue
+        rects = [c for c in node if c.tag.replace(SVG_NS, "") == "rect"]
+        if len(rects) != 1:
+            continue
+        r = rects[0]
+        x, y = _num(r, "x"), _num(r, "y")
+        out[node.get("id", "")] = rect_quad(x, y, x + _num(r, "width"),
+                                            y + _num(r, "height"))
+    return out
+
+
+def _cropped(box, clip):
+    """`box` reduced to what the active clip actually shows, or None."""
+    return box if clip is None else box.clipped_to(clip)
+
+
+def _walk(node, chain, order, texts, shapes, grads=None, clips=None, clip=None):
+    clips = clips or {}
     for el in node:
         tag = el.tag.replace(SVG_NS, "")
-        if tag == "defs":
+        if tag in ("defs", "clipPath"):
             continue
         sub = chain + ([el.get("transform")] if el.get("transform") else [])
+        here = clip
+        ref = CLIP_REF.search(el.get("clip-path") or "")
+        if ref and ref.group(1) in clips:
+            window = clips[ref.group(1)]
+            here = window if here is None else (here.clipped_to(window) or window)
         if tag == "text":
             box, content, size, fam = _text_box(el, sub)
-            if content.strip() and _num(el, "opacity", 1.0) >= GHOST:
+            box = _cropped(box, here)
+            if box is not None and content.strip() and _num(el, "opacity", 1.0) >= GHOST:
                 texts.append((order[0], box, content, size, fam, el.get("fill", "")))
         elif tag == "g":
-            _walk(el, sub, order, texts, shapes, grads)
+            _walk(el, sub, order, texts, shapes, grads, clips, here)
             continue
         else:
             box = _shape_box(el, sub, grads)
@@ -403,6 +460,8 @@ def _walk(node, chain, order, texts, shapes, grads=None):
                 approx = isinstance(box, tuple)
                 if approx:
                     box = box[0]
+                box = _cropped(box, here)
+            if box is not None:
                 fill = el.get("fill", "")
                 solid = not approx and fill.lower() not in ("none", "")
                 shapes.append((order[0], box, fill if solid else "", approx))
@@ -467,7 +526,7 @@ def check(svg_text, kind="cover", bleeds=False, safe_pad=COVER_PAD, page=None):
     texts, shapes, order = [], [], [0]
     page = page or ""
     grads = _gradients(root)
-    _walk(root, [], order, texts, shapes, grads)
+    _walk(root, [], order, texts, shapes, grads, _clips(root))
     faults = []
 
     frame = rect_quad(0, 0, W, H)

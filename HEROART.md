@@ -113,7 +113,20 @@ engine:
 | `score`, `allocate` | which motif each item gets and which tone, still pure functions of the content plus a hash of the slug |
 
 Plus `distance` (tone separation, for the feed-spread report), `worlds` (tones a
-`--manifest` may pin by name), `blocked` and `wordmark`. Pass one to `main`:
+`--manifest` may pin by name), `blocked`, `wordmark`, and `allocate_axes` — the hook
+for anything else a skin varies per post and therefore has to spread per post.
+
+`allocate_axes(entries) -> {slug: {name: value}}` is handed the published feed with
+every item's final direction, *after* the manifest has had its say, and whatever it
+returns is merged into the palette dict the direction is given. The engine has no
+opinion about what is in there: a composition, a crop, a type scale, a serial number.
+It has one opinion about *why* the hook exists — a skin that varies something the
+engine does not know about is a skin whose extra axis is unbalanced, and an
+unbalanced axis is how a page ends up reading as one card repeated even though every
+number in the report looks healthy. `PASTEL` leaves it unset and is unchanged by its
+existence.
+
+Pass a skin to `main`:
 
 ```python
 from keel_content.heroart import Paths, main
@@ -157,6 +170,31 @@ needs a skin or just a `--surfaces` narrowing:
   violet card would state something false.
 
 One of those is a reason to narrow `--surfaces`. All three together are a skin.
+
+### The second measured lesson: a motif that ignores its subject
+
+That skin's first version drew seven fixed motifs, passed every balancing number in
+the report, and still read as one card repeated across its corpus. The reason was not
+balance. Two posts that landed on the same motif got the *same drawing*, because a
+motif read nothing from its subject beyond a hash of the slug — so the report's
+"0 with one motif over 3 of 10" was true and meant nothing.
+
+What fixed it is worth generalising, because the failure is available to any skin:
+
+* **Variety multiplies across independent axes; it does not add.** Seven motifs times
+  four tones times two grounds is 56 on paper and about seven in a listing, because
+  tone and ground are nearly invisible at thumbnail size while the silhouette is not.
+  A second *visible* axis — where the instrument sits and how large the reading is
+  set — is worth more than doubling the motif pack.
+* **A motif should read its subject's numbers, not just its slug.** Where the strike
+  falls, how many rungs, how deep the drawdown, how many dots are lit: all of that is
+  in the article, and drawing it from the article is what makes two cards on one motif
+  two pictures.
+* **A crop is a free axis and a cheap one**, as long as it is geometric. Lay the motif
+  out in a box larger than the frame and show part of it; do not `scale()` a group,
+  which takes the hairlines and the type with it.
+* **And then measure the result** — see section 4b. Every claim above was checked by
+  measuring the finished covers, and two of them were wrong the first time.
 
 ## 3. Hard rules
 
@@ -261,6 +299,51 @@ ground under a word, since a curve's box overstates it.
 * **A rule that fires on good work is worse than no rule.** The first crowding check
   flagged 445 things, nearly all of them a motif's own panels doing their job. A check
   nobody can trust is a check everybody learns to skip.
+* **A clip is part of the picture, so the ruler has to read it.** A motif laid out
+  larger than its frame and cropped to it is measured at its *clipped* extent, not its
+  built one — otherwise every crop reports content pressing the margin it never
+  reaches. `_clips` reads a `clipPath` holding a single rect, in canvas space, so the
+  clip and the ruler cannot disagree: put the clip on a group that carries nothing
+  else and the transform on an inner group, and both a browser and this file mean the
+  same thing by it.
+
+## 4b. The lookalike check: measuring the finished covers against each other
+
+The layout audit asks whether one image is well made. This asks whether two of them
+are the same picture, which is a different question and one no per-image check can
+reach.
+
+`similar.signature(svg)` walks a cover with the audit's own parser — same transforms,
+same clip handling — and reduces it to a 12x7 map of where the ink landed, with text
+weighted higher than fill because text is a small part of a card's area and most of
+what tells two of them apart. `similar.distance` is the mean absolute difference
+between two maps: 0 is the same picture, and anything over about 0.10 is two
+unmistakably different ones. The build prints
+
+```
+visual spread: nearest-neighbour distance min 0.018, median 0.079, worst-apart 0.104
+```
+
+and, with `--alike THRESHOLD`, fails on any pair under that threshold **that a reader
+can see on one page**. Two lookalikes twenty posts apart are not a fault, and
+reporting them as one buries the pairs that are.
+
+Three things about it that are deliberate:
+
+* **It is geometric, and it says nothing about colour.** That is right for a skin
+  whose colour is semantic and narrow — where two cards in different tones really are
+  the same drawing — and misleading for one whose cards are told apart mainly by hue.
+  `PASTEL` scores a median around 0.019 while reading as varied. So the gate is
+  **off unless a consumer passes `--alike`**, and the number it passes is calibrated
+  against its own corpus, not inherited.
+* **It is not a raster hash.** Rasterising needs a browser or a native library, which
+  would make a step that runs everywhere depend on one that does not, for an answer
+  the geometry in the file already contains.
+* **Calibrate it from both ends.** binaryoption.trading's pre-rewrite corpus had a
+  nearest-neighbour minimum of 0.000 — two motifs drawn identically — and a 25th
+  percentile of 0.012; after the rewrite its same-page minimum was 0.023. It ships at
+  `--alike 0.016`: comfortably above what a genuine duplicate scores, comfortably
+  below what its worst honest pair scores.
 
 ## 5. How a direction is chosen
 

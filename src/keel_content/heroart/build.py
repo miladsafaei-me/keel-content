@@ -22,6 +22,7 @@ import sys
 import tempfile
 
 from . import audit
+from . import similar
 from . import subject as subject_mod
 from .draw import seedof
 from .choose import assign, load_manifest
@@ -163,7 +164,14 @@ def main(argv=None, paths=None, skin=PASTEL):
                          f"(default: {' '.join(default_surfaces)})")
     ap.add_argument("--faults", help="write every layout fault to this file")
     ap.add_argument("--strict", action="store_true",
-                    help="exit non-zero when the layout audit finds anything")
+                    help="exit non-zero when the layout audit finds anything, or "
+                         "when two cards on one page look alike")
+    ap.add_argument("--alike", type=float, default=0.0,
+                    help="how close two covers on one page may read before it is a "
+                         "fault, 0 to 1. Off by default: this measures composition "
+                         "alone, so the right value depends on whether a skin tells "
+                         f"its cards apart that way ({similar.TOO_ALIKE} is a "
+                         "starting point to calibrate from)")
     ap.add_argument("--wordmark", default=None,
                     help="brand name signed into the corner of the directions that "
                          "sign their canvas; unset renders no wordmark")
@@ -230,14 +238,19 @@ def main(argv=None, paths=None, skin=PASTEL):
 
     assigned = assign(pending, sorted(valid), order=order,
                       surfaces=tuple(args.surfaces or default_surfaces), skin=skin)
-    report, faults = [], []
+
+    # The manifest has its say before anything is spread, not after. A skin that
+    # allocates further axes has to see the direction each post ended up with,
+    # including the hand-pinned ones, or it spreads compositions against a motif
+    # assignment that is not the one being rendered.
+    resolved, sources = {}, {}
     for subject, _cluster, _role in pending:
         slug = subject.key
         key, tone, surface = assigned[slug]
-        source = "auto"
+        sources[slug] = "auto"
         entry = manifest.get(slug) or {}
         if entry.get("direction") in valid:
-            key, source = entry["direction"], "manifest"
+            key, sources[slug] = entry["direction"], "manifest"
         if entry.get("world") in skin.worlds:
             tone = skin.worlds[entry["world"]]
         # `hue` is the pastel skin's name for a tone and stays supported; `tone` is
@@ -245,8 +258,24 @@ def main(argv=None, paths=None, skin=PASTEL):
         for field in ("tone", "hue"):
             if field in entry and not isinstance(entry[field], bool):
                 tone = entry[field]
+        resolved[slug] = (key, tone, surface)
+
+    axes = {}
+    if skin.allocate_axes:
+        by_slug = {s.key: s for s, _c, _r in pending}
+        at = {slug: i for i, slug in enumerate(order)}
+        walk = sorted(resolved, key=lambda s: at.get(s, len(order)))
+        axes = skin.allocate_axes(
+            [(slug, by_slug[slug], resolved[slug][0]) for slug in walk]) or {}
+
+    report, faults, drawn = [], [], {}
+    for subject, _cluster, _role in pending:
+        slug = subject.key
+        key, tone, surface = resolved[slug]
+        source = sources[slug]
         direction = by_key[key]
         colours = skin.palette(tone, surface)
+        colours.update(axes.get(slug) or {})
         hero_svg = direction.hero(subject, colours, f"h{seedof(slug) % 999983}_")
         cover_svg = direction.cover(subject, colours, f"c{seedof(slug) % 999983}_")
         # Check the image that was produced, not the intent behind it: every layout
@@ -256,6 +285,7 @@ def main(argv=None, paths=None, skin=PASTEL):
             for fault in audit.check(markup, kind=kind, bleeds=direction.bleeds,
                                      page=colours["ground"]):
                 faults.append(f"{slug} [{key} {kind}] {fault}")
+        drawn[slug] = cover_svg
         (hero_dir / f"{slug}.svg").write_text(hero_svg, encoding="utf-8")
         (card_dir / f"{slug}.svg").write_text(cover_svg, encoding="utf-8")
         if args.og:
@@ -276,6 +306,15 @@ def main(argv=None, paths=None, skin=PASTEL):
     print("surfaces:", dict(Counter(r["surface"] for r in report)))
     if order:
         print("feed spread:", feed_spread(report, order, skin))
+
+    # What the assignment intended is not what the reader sees. Measure the finished
+    # covers against each other so a motif that draws the same picture for every
+    # subject is caught here rather than in a corpus review months later.
+    signatures = {slug: similar.signature(markup) for slug, markup in drawn.items()}
+    alike = (similar.pairs(signatures, order, threshold=args.alike)
+             if args.alike > 0 else [])
+    if signatures:
+        print("visual spread:", similar.report(signatures, order, args.alike))
     print("hand-pinned by manifest:", sum(1 for r in report if r["source"] == "manifest"))
     if skipped:
         print("skipped:", ", ".join(skipped[:12]) + ("…" if len(skipped) > 12 else ""))
@@ -295,10 +334,19 @@ def main(argv=None, paths=None, skin=PASTEL):
                 print("   ", line)
             if len(faults) > 20:
                 print(f"    … and {len(faults) - 20} more (use --faults FILE)")
-        if args.strict:
-            return 1
     else:
         print("\nlayout audit: clean")
+
+    if alike:
+        print(f"\nLOOKALIKES: {len(alike)} pair(s) under {args.alike:.3f} "
+              f"within one page")
+        for d, a, b in alike[:12]:
+            print(f"  {d:.3f}  {a}  ~  {b}")
+        if len(alike) > 12:
+            print(f"    … and {len(alike) - 12} more")
+
+    if (faults or alike) and args.strict:
+        return 1
     return 0
 
 

@@ -16,6 +16,9 @@ that belong to the engine:
   contract and never change; what the roles resolve to is the site's decision.
 * **allocate** and **score** — which motif each item gets and which tone, both still
   pure functions of the content plus a hash of the slug.
+* **allocate_axes** — anything else that varies per post and has to be spread across
+  a page: a composition, a crop, a type scale. The engine passes whatever comes back
+  through to the direction inside its palette dict and otherwise ignores it.
 
 The tone axis is deliberately untyped. `PASTEL` uses integer hues off a curated wheel;
 a site whose colours *mean* something uses named tones instead, and supplies a
@@ -72,6 +75,15 @@ class Skin:
     allocate: callable = _pastel_allocate
     #: (entries, choices, blocked) -> {slug: surface}. Same entry shape.
     allocate_surfaces: callable = _pastel_surfaces
+    #: (entries) -> {slug: {name: value}}, merged into the palette dict each
+    #: direction is handed, after the manifest has had its say. This is where a skin
+    #: puts axes the engine has no opinion about — which composition a cover uses,
+    #: how close the crop is, how large the readout is set. The engine spreads
+    #: motifs, tones and grounds; a skin that varies anything else has to spread that
+    #: too, and it has to do it over the same feed order, which is why this is handed
+    #: the feed rather than one item. None means the skin adds no axes, which is what
+    #: `PASTEL` does, so its output is unchanged by the existence of this seam.
+    allocate_axes: callable = None
     #: (subject, direction_key, role) -> float. Higher wins.
     score: callable = _choose.score
     #: Separation between two tones, for the feed-spread report only. Whatever it
