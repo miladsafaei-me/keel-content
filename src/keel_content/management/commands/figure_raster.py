@@ -1,7 +1,9 @@
 """Rasterize ONE pipeline in-article figure: SVG -> PNG (judge preview) + WebP.
 
-The container-native replacement for ``tools/content_pipeline/figure_rasterize.sh``
-(which shelled out to flatpak Chromium + ImageMagick). Rendering uses the in-image
+**This command is the figure rasterizer.** It is the container-native replacement
+for the retired host script ``figure_rasterize.sh`` (which shelled out to flatpak
+Chromium + ImageMagick); that script no longer exists in any consumer, so a doc or
+prompt still naming it is stale. Rendering uses the in-image
 Playwright Chromium via :mod:`keel_content.core.html_raster` (full SVG
 fidelity — the judge sees exactly the pixels that ship) and WebP transcode uses
 Pillow, so it runs unchanged inside the web container where the render stages now

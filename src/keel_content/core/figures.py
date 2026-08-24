@@ -2,9 +2,10 @@
 
 The author stage decides *where* an image earns a place and emits a
 ``[[FIGURE:<id>]]`` marker line plus a structured ``figure_requests`` entry; a
-post-generation stage draws each figure as an SVG, rasterizes it to WebP
-(``tools/content_pipeline/figure_rasterize.sh``), vision-judges the pixels, and
-patches a ``figures`` array into the bundle::
+post-generation stage draws each figure as an SVG, rasterizes it to WebP (the
+``figure_raster`` management command, run wherever the Playwright image lives — a
+host that generates off-server reaches it through its own render wrapper),
+vision-judges the pixels, and patches a ``figures`` array into the bundle::
 
     figures: [{"id": "fig-1", "file": "<content_id>.figures/fig-1.webp",
                "svg": "<content_id>.figures/fig-1.svg",

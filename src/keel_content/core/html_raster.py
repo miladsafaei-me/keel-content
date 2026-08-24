@@ -1,8 +1,8 @@
 """Rasterize an HTML string to PNG bytes with the in-image Playwright Chromium.
 
-Replaces the old flatpak-Chromium CLI path (``nb2_image._rasterize`` and
-``tools/content_pipeline/figure_rasterize.sh``) so the content-pipeline render
-stages run anywhere the Playwright browser is installed. In production that is
+Replaces the old flatpak-Chromium CLI path (``nb2_image._rasterize`` and a host
+``figure_rasterize.sh`` script — both retired, neither exists any more) so the
+content-pipeline render stages run anywhere the Playwright browser is installed. In production that is
 inside the web image (the base is ``mcr.microsoft.com/playwright/python`` and the
 Dockerfile already runs ``playwright install chromium``), which is where the
 render stages now execute over SSH — no system browser, no flatpak, no local
