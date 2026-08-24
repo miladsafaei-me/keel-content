@@ -82,6 +82,20 @@ class ClaudeReply:
 
 class ClaudeClient:
     def __init__(self) -> None:
+        # Policy gate first, so a host that forbids the metered API path gets told THAT
+        # rather than "your key is missing" — the second message invites someone to
+        # helpfully supply a key and walk straight through the policy.
+        from keel_content.config import allow_anthropic_api
+
+        if not allow_anthropic_api():
+            raise RuntimeError(
+                "This host has disabled keel-content's direct Anthropic API paths "
+                '(KEEL_CONTENT["allow_anthropic_api"] = False). The command or step you '
+                "invoked runs on a metered API key, which this project's policy forbids: "
+                "its LLM work runs inside an interactive agent session instead. Do NOT "
+                "re-enable the flag or supply a key to get past this — find the "
+                "in-session path in the host's own documentation."
+            )
         key = _resolve_anthropic_api_key()
         if not key:
             raise RuntimeError(

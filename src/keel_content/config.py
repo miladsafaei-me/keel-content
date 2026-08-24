@@ -82,6 +82,26 @@ def risk_warning_url(default=None):
     return content_setting("risk_warning_url", default)
 
 
+def allow_anthropic_api(default: bool = True) -> bool:
+    """Whether this host permits the package's direct Anthropic API paths.
+
+    A few capabilities here call the Anthropic API through
+    :class:`keel_content.core.claude_client.ClaudeClient`: the
+    ``author_glossary_terms`` command, the single-article ``glossary_gap``, and the
+    Twitter triage / embed / ingest steps. They are genuine package capabilities, so
+    this defaults to **True** — no existing adopter changes behaviour on upgrade.
+
+    A host whose policy is that every LLM step runs inside an interactive agent session
+    rather than on a metered API key sets
+    ``KEEL_CONTENT["allow_anthropic_api"] = False``. Each of those paths then refuses at
+    construction, naming the host's own policy, instead of resolving on the command line
+    and failing later on a missing key. That silence is what made these commands a
+    standing trap: a host can retire them from its docs and its own tree, and they still
+    answer ``manage.py`` from inside the installed package.
+    """
+    return bool(content_setting("allow_anthropic_api", default))
+
+
 def market_link_rule() -> dict | None:
     """The host's market-integrity link rule for the quality-gate R6 check, or ``None``.
 
