@@ -23,7 +23,9 @@ dependencies = [
     # triage, chart recovery from a screenshot, figure drawing and the
     # markup-or-picture policy. Deliberately a standalone package with no Django
     # and no keel, so it stays useful (and testable) outside this pipeline.
-    "page-extract @ git+https://github.com/miladsafaei-me/page-extract@v0.1.0",
+    # Named bare, like keel-ui: hatchling rejects a direct git reference here,
+    # and the consumer's requirements.txt is where the tag is pinned anyway.
+    "page-extract",
 ]
 
 [project.optional-dependencies]
