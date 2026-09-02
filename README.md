@@ -98,6 +98,8 @@ host (SignalBots' current layout) so an existing host adopts with little config:
 ## Runtime requirements
 
 - `yt-dlp` on `PATH` (the YouTube-transcript route shells out to it; no API key).
+- `ffmpeg` on `PATH` (only for `core.youtube_frames`, the video-screenshot stage;
+  `pip install imageio-ffmpeg` also satisfies it).
 - `playwright` (optional extra `keel-content[raster]`) for HTML→PNG raster passes.
 - `django-unfold` (optional extra `keel-content[admin]`) for the themed admin; the admin
   degrades to Django's stock admin without it.

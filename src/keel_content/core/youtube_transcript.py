@@ -89,19 +89,94 @@ def _download_json3(url: str, lang: str, workdir: str, timeout: int) -> Path | N
     return None
 
 
-def _parse_json3(path: Path) -> str:
-    """json3 -> clean running text. Joins event segments, collapses whitespace, and
-    drops immediate duplicate phrases (guards against rolling auto-captions)."""
+def _parse_json3_segments(path: Path) -> list[tuple[float, str]]:
+    """json3 -> ``[(start_second, text)]``.
+
+    The start time of each caption line is kept rather than discarded, because it
+    is the only thing connecting a sentence to a second of video - which is what
+    the screenshot stage (:mod:`keel_content.core.youtube_frames`) needs in order
+    to know where to look. Immediate duplicate phrases are dropped: YouTube's
+    auto-captions scroll, so each event tends to restate the tail of the one
+    before it.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
-    lines: list[str] = []
+    out: list[tuple[float, str]] = []
     for ev in data.get("events", []):
         segs = ev.get("segs")
         if not segs:
             continue
-        text = "".join(s.get("utf8", "") for s in segs).replace("\n", " ").strip()
-        if text and (not lines or lines[-1] != text):
-            lines.append(text)
-    return _WS_RE.sub(" ", " ".join(lines)).strip()
+        text = _WS_RE.sub(" ", "".join(s.get("utf8", "") for s in segs).replace("\n", " ")).strip()
+        if not text:
+            continue
+        if out and (text == out[-1][1] or text in out[-1][1]):
+            continue
+        if out and out[-1][1] in text:
+            out[-1] = (out[-1][0], text)
+            continue
+        out.append((int(ev.get("tStartMs", 0)) / 1000.0, text))
+    return out
+
+
+def _parse_json3(path: Path) -> str:
+    """json3 -> clean running text, timestamps dropped."""
+    return " ".join(text for _, text in _parse_json3_segments(path)).strip()
+
+
+def timecode(seconds: float) -> str:
+    """Seconds as ``MM:SS``, growing an hours field only once past an hour."""
+    total = int(max(0.0, seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def thin_index(segments: list[tuple[float, str]], *, every_seconds: float = 30.0) -> str:
+    """A ``[MM:SS] text`` index at roughly one line per ``every_seconds``.
+
+    A forty-minute video's full transcript is far too long to hand a model just to
+    ask which moments deserve a picture; this keeps enough wording to tell what is
+    happening when, at a fraction of the tokens.
+    """
+    lines: list[str] = []
+    next_at = 0.0
+    for start, text in segments:
+        if start >= next_at:
+            lines.append(f"[{timecode(start)}] {text}")
+            next_at = start + every_seconds
+    return "\n".join(lines)
+
+
+def extract_segments(url: str, *, lang: str = "en", timeout: int = 120) -> dict:
+    """Like :func:`extract`, but the transcript also comes back as timestamped
+    ``segments`` - the form the screenshot stage needs."""
+    url = str(url or "").strip()
+    if not video_id(url):
+        raise TranscriptUnavailable(f"not a recognizable YouTube URL: {url!r}")
+
+    meta = fetch_metadata(url, timeout=timeout)
+    with tempfile.TemporaryDirectory() as tmp:
+        cap = _download_json3(url, lang, tmp, timeout)
+        if cap is None:
+            raise TranscriptUnavailable(
+                f"no {lang} caption track for {url!r} (a Whisper audio fallback would "
+                "be needed - out of scope for phase 1)"
+            )
+        segments = _parse_json3_segments(cap)
+    if not segments:
+        raise TranscriptUnavailable(f"caption file for {url!r} parsed to empty text")
+
+    transcript = " ".join(text for _, text in segments)
+    return {
+        "video_id": meta["id"],
+        "url": canonical_url(url),
+        "title": meta["title"],
+        "channel": meta["channel"],
+        "duration": meta["duration"],
+        "upload_date": meta["upload_date"],
+        "transcript": transcript,
+        "segments": segments,
+        "words": len(transcript.split()),
+    }
 
 
 def extract(url: str, *, lang: str = "en", timeout: int = 120) -> dict:
