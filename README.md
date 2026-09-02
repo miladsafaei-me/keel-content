@@ -54,6 +54,15 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   → persist), gated on a recorded pass verdict.
 - **A default prompt set** (`keel_content/prompts_default/`) a host overrides per project.
 
+## The republish route
+
+Turn pages that already rank into our own content — merged into one article,
+split into several, or reduced to a single visual grafted into a post that
+already exists. Its source-side half is the standalone `page-extract` package;
+this repo holds the plan contract, bundle assembly and the graft command, plus
+the brief integration that lets a brief borrow from competitor visuals without
+being led by them. See [REPUBLISH.md](REPUBLISH.md).
+
 ## Consume it (host wiring)
 
 1. `pip install keel-content` (or a git/editable install during development). It depends
