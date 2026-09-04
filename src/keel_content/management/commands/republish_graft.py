@@ -6,10 +6,15 @@ smallest useful output is a single visual: a chart or a comparison lifted from
 somewhere, rebuilt as one of our components or drawn as our own figure, and
 dropped into an article published months ago. No new URL, no rewrite.
 
-The block goes into **both** bodies a post keeps — ``content_rendered`` (what
-the page shows) and ``content_markdown_source`` (what an editor sees) — so the
-two never disagree. Every graft carries a ``data-graft-id``: running the same
-payload again replaces its own block instead of stacking a second copy.
+The block goes into **all three** bodies a post keeps. ``content_rendered`` is
+what the page shows and ``content_markdown_source`` is what an editor sees, but
+neither is the source: a host rebuilds ``content_rendered`` from ``content_raw``
+every time it re-runs its auto-linker, so a graft written only to the rendered
+body survives until the next unrelated publish and then silently disappears.
+Writing ``content_raw`` as well is what makes a graft permanent.
+
+Every graft carries a ``data-graft-id``: running the same payload again replaces
+its own block instead of stacking a second copy.
 """
 
 from __future__ import annotations
@@ -135,17 +140,26 @@ class Command(BaseCommand):
             raise CommandError("payload carries neither a visual nor a figure")
 
         html = _strip_existing(post.content_rendered or "", graft_id)
+        raw = _strip_existing(post.content_raw or "", graft_id)
         md = _strip_existing(post.content_markdown_source or "", graft_id)
         html, html_ok = _insert(html, block, anchor, _html_heading)
+        # content_raw is the pre-auto-link source a host re-renders from, so the
+        # block has to land here too or the next re-render drops it.
+        raw, raw_ok = _insert(raw, block, anchor, _html_heading)
         md, md_ok = _insert(md, md_block, anchor, _md_heading)
 
         if not html_ok:
             raise CommandError(
                 f"anchor heading {anchor['text']!r} not found in {slug} "
                 f"(mode={anchor['mode']})")
+        if not raw_ok:
+            self.stdout.write(self.style.WARNING(
+                "  anchor not found in content_raw; this graft will be dropped the "
+                "next time the host re-renders the post from it"))
         if not md_ok:
             self.stdout.write(self.style.WARNING(
-                "  anchor not found in the markdown source; rendered body updated only"))
+                "  anchor not found in the markdown source; the editor will not "
+                "show this block"))
 
         from keel_cms.models import read_time_minutes_for
         minutes = read_time_minutes_for(html)
@@ -157,10 +171,11 @@ class Command(BaseCommand):
             return
 
         post.content_rendered = html
+        post.content_raw = raw
         post.content_markdown_source = md
         post.read_time_minutes = minutes
-        post.save(update_fields=["content_rendered", "content_markdown_source",
-                                 "read_time_minutes"])
+        post.save(update_fields=["content_rendered", "content_raw",
+                                 "content_markdown_source", "read_time_minutes"])
         self.stdout.write(self.style.SUCCESS(
             f"grafted {graft_id} ({what}) into {slug} "
             f"{anchor['mode']} {anchor['text']!r}"))

@@ -104,10 +104,16 @@ manage.py republish_graft <workspace>/out/graft-<id>.json     # graft outputs
 
 `content_import` runs its usual gates on top of the plan's own validation.
 
-`republish_graft` writes the block into **both** `content_rendered` and
-`content_markdown_source`, so the rendered page and the editor never disagree,
-and stamps a `data-graft-id`. Re-running the same payload replaces its own block
-rather than stacking a second copy — change the id and you get a second block.
+`republish_graft` writes the block into **all three** bodies a post keeps —
+`content_rendered` (what the page serves), `content_raw` (what a host re-renders
+*from*) and `content_markdown_source` (what an editor sees) — and stamps a
+`data-graft-id`. Re-running the same payload replaces its own block rather than
+stacking a second copy; change the id and you get a second block.
+
+`content_raw` is the one that is easy to forget and expensive to miss. A host's
+auto-linker rebuilds `content_rendered` from `content_raw` whenever anything
+republishes, so a graft written only to the rendered body looks correct for days
+and then vanishes at a moment unrelated to the graft.
 
 ## Traps
 
