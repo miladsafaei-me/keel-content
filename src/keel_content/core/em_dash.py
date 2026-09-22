@@ -294,7 +294,8 @@ def resolve_default(view: str, d: Dash) -> None:
     left = _words(view[d.sentence[0]:d.start])
     if not right or not left:
         d.kind, d.rule = HYPHEN, "default-edge"
-    elif right[0].lower() in _DETERMINERS or right[0][:1].isupper():
+    elif len(left) <= 6 or right[0].lower() in _DETERMINERS or right[0][:1].isupper():
+        # A short lead-in is a label or a title ("FTMO EA rules — what an EA can do").
         d.kind, d.rule = COLON, "default-colon"
     else:
         d.kind, d.rule = COMMA, "default-comma"

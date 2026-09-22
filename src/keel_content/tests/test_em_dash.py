@@ -59,6 +59,9 @@ class ReplaceEmDashesTests(SimpleTestCase):
         text = "The firm's account — the payoff for clearing the challenge inside the limit."
         self.assertNotIn("—", replace_em_dashes(text))
 
+    def test_short_title_defaults_to_a_colon(self):
+        self.assertReplaced("FTMO EA rules — what an EA can and cannot do", "FTMO EA rules: what an EA can and cannot do")
+
     def test_idempotent_and_empty_safe(self):
         once = replace_em_dashes("Fast — so you never miss a call.")
         self.assertEqual(replace_em_dashes(once), once)
