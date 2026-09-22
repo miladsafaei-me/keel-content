@@ -43,6 +43,7 @@ from keel_content.core.bundle_lint import lint_bundle, lint_bundle_warnings
 from keel_content.core.figures import figure_violations, normalize_figures
 from keel_content.core.images import image_violations, normalize_images
 from keel_content.core.quality_rubric import check_bundle, cross_checks
+from keel_content.config import content_setting
 from keel_content.core.text_normalize import normalize_bundle
 
 
@@ -206,7 +207,7 @@ class Command(BaseCommand):
 
             # Deterministic typographic normalization runs before lint + publish so the
             # gate sees (and the DB stores) the canonicalized prose.
-            normalize_bundle(bundle)
+            normalize_bundle(bundle, replace_em_dash=bool(content_setting("replace_em_dash", False)))
 
             violations: list[str] = []
             if do_lint:
