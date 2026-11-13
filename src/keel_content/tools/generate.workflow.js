@@ -123,7 +123,7 @@ const contents = A.limit ? all.slice(0, A.limit) : all
 //   M_MECH   — pure script-runner agents (run a command, return its output)
 const M_AUTHOR = 'opus'
 const M_JUDGE = 'sonnet'
-const M_MECH = 'haiku'
+const M_MECH = 'sonnet' // owner, 2026-11-13: script-runners run on Sonnet (was haiku)
 
 // Per-stage subagent TYPE, the tool-surface twin of the model tiering above. Every
 // agent pays a fixed context floor before it does any work, and pays it again on
