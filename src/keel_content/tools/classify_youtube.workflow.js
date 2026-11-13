@@ -86,7 +86,7 @@ log(`classifying ${videos.length} video(s) — one agent each, reading its trans
 
 const specs = await parallel(
   videos.map((v) => () =>
-    agent(buildPrompt(v), { label: `classify:${v.youtube_url}`, phase: 'Classify', schema: SPEC_SCHEMA })
+    agent(buildPrompt(v), { label: `classify:${v.youtube_url}`, phase: 'Classify', schema: SPEC_SCHEMA, model: 'sonnet' })
       .then((s) => (s ? { ...s, youtube_url: v.youtube_url, source_transcript_path: v.transcript_path, target: 'blog' } : null))
   )
 )
