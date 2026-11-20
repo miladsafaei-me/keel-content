@@ -104,6 +104,17 @@ host (SignalBots' current layout) so an existing host adopts with little config:
   `AiSetting` admin row when present, else from `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`
   env vars.
 
+## Gemini text calls (`core.gemini_client`)
+
+Since v0.17.0. `GeminiClient(api_key=...).generate(system, user, json_output=True, store=..., prompt_version=...)`
+is the one wrapper for Gemini text calls in Keel consumers, beside `core.claude_client` for Claude. Standard
+library only. It owns the model id (default `gemini-3.5-flash`, or `KEEL_GEMINI_MODEL`), sends the system
+instruction first and unchanged for Gemini's implicit prompt cache, keeps a response cache through any
+`store` with `get`/`set` (key: SHA-256 of model, prompts, settings and `prompt_version`; never an error,
+refusal, cut-off or invalid JSON; `refresh=True` bypasses it), logs tokens and cost per call, and raises one
+`GeminiError` whose `kind` (`no_key`, `auth`, `quota`, `unavailable`, `blocked`, `truncated`,
+`bad_response`, `network`) a caller falls back on. First consumer: forexsignally.com's market view.
+
 ## Runtime requirements
 
 - `yt-dlp` on `PATH` (the YouTube-transcript route shells out to it; no API key).
