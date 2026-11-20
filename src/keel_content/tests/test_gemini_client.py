@@ -82,3 +82,44 @@ def test_cost_uses_the_price_table(monkeypatch):
         "promptTokenCount": 1_000_000, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "thoughtsTokenCount": 0}))
     assert client.generate("s", "u").cost_usd == pytest.approx(1.0)
     assert json.loads(json.dumps(client.generate("s", "u").usage))["input"] == 1_000_000
+
+
+def grounded_answer():
+    payload = answer(text="Use AppX or AppY.")
+    payload["candidates"][0]["groundingMetadata"] = {"groundingChunks": [
+        {"web": {"uri": "https://a.example/x", "title": "A"}},
+        {"web": {"uri": "https://b.example/y", "title": "B"}},
+        {"web": {"title": "no uri"}}]}
+    return payload
+
+
+def test_grounding_off_by_default_sends_no_tools(monkeypatch):
+    sent = []
+    client = gc.GeminiClient(api_key="k")
+    monkeypatch.setattr(client, "_post", lambda body: sent.append(body) or answer())
+    result = client.generate("s", "u")
+    assert "tools" not in sent[0]
+    assert result.sources == []
+
+
+def test_grounding_adds_tool_and_exposes_sources(monkeypatch):
+    sent = []
+    client = gc.GeminiClient(api_key="k")
+    monkeypatch.setattr(client, "_post", lambda body: sent.append(body) or grounded_answer())
+    result = client.generate("s", "u", grounding=True)
+    assert sent[0]["tools"] == [{"google_search": {}}]
+    assert result.sources == [{"title": "A", "uri": "https://a.example/x"}, {"title": "B", "uri": "https://b.example/y"}]
+
+
+def test_grounding_flag_is_in_the_cache_key_and_sources_are_cached(monkeypatch):
+    sent = []
+    client = gc.GeminiClient(api_key="k")
+    monkeypatch.setattr(client, "_post", lambda body: sent.append(body) or grounded_answer())
+    store = Store()
+    client.generate("s", "u", store=store)
+    assert len(sent) == 1
+    first = client.generate("s", "u", store=store, grounding=True)
+    assert len(sent) == 2 and not first.cache_hit
+    again = client.generate("s", "u", store=store, grounding=True)
+    assert again.cache_hit and len(sent) == 2
+    assert again.sources == first.sources

@@ -14,6 +14,11 @@ can call it without the Anthropic SDK being used. It owns what the model-call ru
   and the caller's ``prompt_version``. Only a complete, valid answer is stored:
   never an error, a refusal, a cut-off answer or JSON that does not parse.
   ``refresh=True`` bypasses it.
+- **Google Search grounding**, off by default: ``generate(..., grounding=True)`` adds the
+  ``google_search`` tool and ``result.sources`` lists the cited ``{"title", "uri"}`` pairs
+  from ``groundingMetadata.groundingChunks``. The flag is part of the response-cache key
+  (only when on, so keys of existing callers do not change). Grounded answers rely on live
+  web results: pass a short-lived store, or none.
 - **Cost logging**, one log line per call: model, input, cached, output and thinking
   tokens, the dollar cost (``price_per_mtok``; a free-tier key costs 0) and whether
   the response cache answered.
@@ -59,6 +64,7 @@ class GeminiResult:
     usage: dict = field(default_factory=dict)
     cost_usd: float = 0.0
     cache_hit: bool = False
+    sources: list = field(default_factory=list)
 
 
 def cache_key(**parts) -> str:
@@ -75,16 +81,20 @@ class GeminiClient:
         self.price_per_mtok = price_per_mtok
         self.retries = retries
 
-    def _body(self, system: str, user: str, json_output: bool, temperature: float, max_output_tokens: int) -> dict:
+    def _body(self, system: str, user: str, json_output: bool, temperature: float, max_output_tokens: int,
+              grounding: bool = False) -> dict:
         config = {"temperature": temperature, "maxOutputTokens": max_output_tokens}
         if json_output:
             config["responseMimeType"] = "application/json"
         if self.thinking_level:
             config["thinkingConfig"] = {"thinkingLevel": self.thinking_level}
         # Stable first (system), volatile last (user): the order the prompt cache needs.
-        return {"systemInstruction": {"parts": [{"text": system}]},
+        body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
                 "generationConfig": config}
+        if grounding:
+            body["tools"] = [{"google_search": {}}]
+        return body
 
     def _post(self, body: dict) -> dict:
         request = urllib.request.Request(
@@ -117,20 +127,22 @@ class GeminiClient:
 
     def generate(self, system: str, user: str, *, json_output: bool = False, temperature: float = 0.4,
                  max_output_tokens: int = 2048, store=None, prompt_version: str = "", refresh: bool = False,
-                 label: str = "") -> GeminiResult:
+                 label: str = "", grounding: bool = False) -> GeminiResult:
         if not self.api_key:
             raise GeminiError("no_key")
         key = cache_key(provider="gemini", model=self.model, system=system, user=user, json=json_output,
                         temperature=temperature, max_output_tokens=max_output_tokens,
-                        thinking=self.thinking_level, prompt_version=prompt_version)
+                        thinking=self.thinking_level, prompt_version=prompt_version,
+                        **({"grounding": True} if grounding else {}))
         if store is not None and not refresh:
             hit = store.get(key)
             if hit:
                 logger.info("gemini %s model=%s cache_hit=1", label, self.model)
                 return GeminiResult(text=hit["text"], data=hit.get("data"), model=self.model,
-                                    model_version=hit.get("model_version", ""), usage={}, cache_hit=True)
+                                    model_version=hit.get("model_version", ""), usage={}, cache_hit=True,
+                                    sources=hit.get("sources") or [])
 
-        payload = self._post(self._body(system, user, json_output, temperature, max_output_tokens))
+        payload = self._post(self._body(system, user, json_output, temperature, max_output_tokens, grounding))
         candidates = payload.get("candidates") or []
         if not candidates:
             raise GeminiError("blocked", str(payload.get("promptFeedback", ""))[:200])
@@ -148,6 +160,12 @@ class GeminiClient:
             except ValueError as exc:
                 raise GeminiError("bad_response", "answer is not valid JSON") from exc
 
+        sources = []
+        for chunk in (cand.get("groundingMetadata") or {}).get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            if web.get("uri"):
+                sources.append({"title": web.get("title", ""), "uri": web["uri"]})
+
         meta = payload.get("usageMetadata") or {}
         usage = {"input": meta.get("promptTokenCount", 0), "cached": meta.get("cachedContentTokenCount", 0),
                  "output": meta.get("candidatesTokenCount", 0), "thinking": meta.get("thoughtsTokenCount", 0)}
@@ -158,8 +176,9 @@ class GeminiClient:
                     label, self.model, payload.get("modelVersion", ""), usage["input"], usage["cached"],
                     usage["output"], usage["thinking"], cost)
         result = GeminiResult(text=text, data=data, model=self.model, model_version=payload.get("modelVersion", ""),
-                              usage=usage, cost_usd=cost)
+                              usage=usage, cost_usd=cost, sources=sources)
         if store is not None:
             store.set(key, {"text": text, "data": data, "model_version": result.model_version,
-                            "prompt_version": prompt_version, "usage": usage, "cost_usd": cost})
+                            "prompt_version": prompt_version, "usage": usage, "cost_usd": cost,
+                            "sources": sources})
         return result

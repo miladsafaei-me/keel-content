@@ -115,6 +115,10 @@ refusal, cut-off or invalid JSON; `refresh=True` bypasses it), logs tokens and c
 `GeminiError` whose `kind` (`no_key`, `auth`, `quota`, `unavailable`, `blocked`, `truncated`,
 `bad_response`, `network`) a caller falls back on. First consumer: forexsignally.com's market view.
 
+Since v0.18.0, `generate(..., grounding=True)` turns on Google Search grounding (default off): the request
+gets `"tools": [{"google_search": {}}]` and `result.sources` lists the cited `{"title", "uri"}` pairs from
+`groundingMetadata.groundingChunks`. The flag is part of the response-cache key when on.
+
 ## Runtime requirements
 
 - `yt-dlp` on `PATH` (the YouTube-transcript route shells out to it; no API key).
